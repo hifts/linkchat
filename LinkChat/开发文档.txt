@@ -117,3 +117,26 @@ A 将文件切片（例如每次4KB），循环发送。
 每天 Git Commit： 保持每天都有代码提交记录。面试官看 GitHub 即使不看代码，看到绿油油的提交记录（Contribution Graph）也会觉得你很有毅力。
 🚀 现在，请开始你的第一步：
 打开 IDE，创建 common/Packet.h，定义你的通信协议结构体。这一步迈出去了，后面就好办了！
+
+
+
+
+初始化
+
+git init
+
+添加
+
+git add .
+
+提交
+
+git commit -m "first commit"
+
+输入地址
+
+git remote add origin 粘贴地址（最好使用SSH地址）
+
+推送
+
+git push -u origin master

@@ -1,4 +1,5 @@
 #include "networkmanager.h"
+#include "filereceiver.h"
 
 #include <QDataStream>
 
@@ -32,7 +33,6 @@ void NetworkManager::sendRow(const QByteArray &packet)
     }else{
         qDebug()<<"[Network] Error: Socket not connected. Cannot send raw data.";
     }
-
 }
 
 NetworkManager::NetworkManager(QObject *parent)
@@ -146,7 +146,7 @@ void NetworkManager::onReadyRead()
         }
         case MSG_ADD_FRIEND_RESULT:{
             AddFriendResp *resp = (AddFriendResp*)body.data();
-            int friendId = resp->requesterId;
+            // int friendId = resp->requesterId;
             bool accepted = resp->accepted;
 
             if(accepted){
@@ -154,6 +154,67 @@ void NetworkManager::onReadyRead()
             }else{
                 emit sigFriendRequestRejected();
             }
+            break;
+        }
+        case MSG_FILE_TRANSFER_REQ:{
+            FileTransferReq *req = (FileTransferReq*)body.data();
+            qDebug() << "[Network] Received file transfer request:"
+                     << "fileId=" << QString::fromUtf8(req->fileId)
+                     << "fileName=" << QString::fromUtf8(req->fileName)
+                     << "fileSize=" << req->fileSize
+                     << "from=" << header->src_id;
+            emit sigFileTransferRequest(
+                QString::fromUtf8(req->fileId),
+                QString::fromUtf8(req->fileName),
+                req->fileSize,
+                header->src_id
+                );
+            break;
+        }
+        case MSG_FILE_TRANSFER_RESP:{
+            if(body.size() < (int)sizeof(FileTransferResp)){
+                qWarning() << "[Network] Invalid FileTransferResp packet size";
+                break;
+            }
+
+            FileTransferResp *resp = (FileTransferResp*)body.data();
+            QString fileId = QString::fromUtf8(resp->fileId);
+            bool accepted = (resp->accepted == 1);
+
+            qDebug() << "[Network] Received file transfer response:"
+                     << "FileID:" << fileId
+                     << "Accepted:" << accepted;
+
+            emit sigFileTransferResponse(fileId,accepted);
+            break;
+        }
+        case MSG_FILE_CHUNK:{
+            // 解析文件分片
+            if (body.size() < (int)sizeof(FileChunk)) {
+                qWarning() << "[Network] Invalid FileChunk packet size";
+                break;
+            }
+
+            FileChunk *chunk = (FileChunk*)body.data();
+            QString fileId = QString::fromUtf8(chunk->fileId);
+            int chunkIndex = chunk->chunkIndex;
+            int chunkSize = chunk->chunkSize;
+
+            // 实际的文件数据
+            QByteArray chunkData = body.mid(sizeof(FileChunk),chunkSize);
+
+            // 传来的数据分片大小不够实际大小时
+            if(chunkData.size() != chunkSize){
+                if (chunkData.size() != chunkSize) {
+                    qWarning() << "[Network] Chunk data size mismatch. Expected:"
+                               << chunkSize << "Got:" << chunkData.size();
+                    break;
+                }
+            }
+
+            // 发送接收分片数据信号
+            emit receiveChunk(fileId,chunkIndex,chunkData);
+            break;
         }
         default:
             break;

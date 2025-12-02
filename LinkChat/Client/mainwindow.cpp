@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "networkmanager.h"
+#include "filereceiver.h"
 
 #include <QBuffer>
 #include <QFileDialog>
@@ -15,7 +16,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setMouseTracking(true);
 
-    // 初始化界面
+    //初始化界面
     initUI();
 
     initModel();
@@ -370,6 +371,15 @@ void MainWindow::initUI()
         background-color: #40444b;
         font-weight: bold;
     }
+
+    QPushButton#btnFile {
+        color: #72767d;
+        border-radius: 20px;
+    }
+    QPushButton#btnFile:hover {
+        background-color: #40444b;
+        font-weight: bold;
+    }
 )";
     this->setStyleSheet(style);
 }
@@ -426,6 +436,24 @@ void MainWindow::connectSignalsAndSlots()
     // 关联拒绝信号
     connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestRejected,this,&MainWindow::onSigFriendRequestRejected);
 
+    // 关联文件请求信号
+    connect(&NetworkManager::instance(), &NetworkManager::sigFileTransferRequest,this, &MainWindow::onSigFileTransferRequest);
+
+    // 关联是否接收文件信号
+    connect(&NetworkManager::instance(),&NetworkManager::sigFileTransferResponse,this,&MainWindow::onsigFileTransferResponse);
+
+    // 关联文件传输信号
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferStarted,this,&MainWindow::onFileTransferStarted);
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferProgress,this,&MainWindow::onFileTransferProgress);
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferCompleted,this,&MainWindow::onFileTransferCompleted);
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferFailed,this,&MainWindow::onFileTransferFailed);
+    connect(&FileTransferManager::instance(),&FileTransferManager::sendFileChunk,this,&MainWindow::onSendFileChunk);
+
+    // 关联文件接收信号
+    connect(&NetworkManager::instance(),&NetworkManager::receiveChunk,this,&MainWindow::onFileReceiveChunk);
+    connect(&FileReceiver::instance(),&FileReceiver::receiveProgress,this,&MainWindow::onFileReceiveProgress);
+    connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,this,&MainWindow::onFileReceiveCompleted);
+    connect(&FileReceiver::instance(),&FileReceiver::receiveFailed,this,&MainWindow::onFileReceiveFailed);
 }
 
 void MainWindow::sendFriendResponse(int requesterId, bool accepted)
@@ -824,7 +852,7 @@ void MainWindow::updateNewFriendsPage()
             "QPushButton:pressed { background: #d9363e; }"
             );
 
-        // 6. 处理按钮点击事件 (使用 Lambda 捕获 id)
+        // 处理按钮点击事件 (使用 Lambda 捕获 id)
         connect(accept, &QPushButton::clicked, this, [=](){
             sendFriendResponse(req.requesterId,true);
             removeRequestAndRefresh(req.requesterId);
@@ -841,9 +869,152 @@ void MainWindow::updateNewFriendsPage()
         layout->addWidget(accept);
         layout->addWidget(reject);
 
-        // 8. 将 Widget 设置给 Item
+        // 将 Widget 设置给 Item
         ui->friendRequestsList->setItemWidget(item, widget);
     }
+}
+
+void MainWindow::onSigFileTransferRequest(const QString &fileId, const QString &fileName, qint64 fileSize, int senderId)
+{
+    // 接收文件方
+
+    // 弹出对话框询问是否接收
+    QString sizeStr;
+    if(fileSize < 1024){
+        sizeStr = QString::number(fileSize) + "B";
+    }else if(fileSize < 1024 * 1024){
+        sizeStr = QString::number(fileSize / 1024.0,'f',2) + "KB";
+    }else{
+        sizeStr = QString::number(fileSize / (1024.0 * 1024.0),'f',2) + "MB";
+    }
+
+    QString msg = QString("用户 %1 向你发送文件：\n文件名：%2\n文件大小：%3\n\n是否接收文件？").arg(senderId).arg(fileName, sizeStr);
+
+    QMessageBox::StandardButton res = QMessageBox::question(this,"接收文件",msg,QMessageBox::Yes | QMessageBox::No);
+
+    // 文件传输响应(回复给发送文件方)
+    FileTransferResp resp;
+    memset(&resp,0,sizeof(FileTransferResp));
+    strncpy(resp.fileId,fileId.toUtf8().constData(),63);
+    resp.accepted = (res == QMessageBox::Yes) ? 1 : 0;
+
+    if(res == QMessageBox::Yes){
+        // 开始接收文件
+        FileReceiver::instance().startReceiving(fileId,fileName,fileSize);
+
+        QString displayText = QString("[接收文件] %1 (%2)").arg(fileName, sizeStr);
+        ChatMessage msg(displayText,false,":/res/you.jpeg");
+        m_chatModel->addMessage(msg);
+        ui->chatList->scrollToBottom();
+    }
+
+    QByteArray packet = makePacket(MSG_FILE_TRANSFER_RESP,QByteArray((char*)&resp,sizeof(FileTransferResp)),0,senderId);
+    NetworkManager::instance().sendRow(packet);
+}
+
+void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
+{
+    if (accepted) {
+        // 对方同意接收文件
+
+        if(m_pendingFileTransfers.contains(fileId)){
+            // 移除并返回value
+            QString filePath = m_pendingFileTransfers.take(fileId);
+
+            // 开始传输文件
+            FileTransferManager::instance().startSendFile(fileId,filePath,m_currentFriendId);
+            // QMessageBox::information(this, "成功", "对方已接受文件传输,开始发送...");
+        }else{
+            qWarning() << "[UI] File path not found for fileId:" << fileId;
+        }
+    } else {
+        // 对方拒绝接收文件
+        m_pendingFileTransfers.remove(fileId);
+        QMessageBox::warning(this, "被拒绝", "对方拒绝接收文件");
+    }
+}
+
+void MainWindow::onFileTransferStarted(const QString &fileId, const QString &fileName)
+{
+    // 在聊天界面显示文件传输消息
+    QString displayText = QString("[文件] %1").arg(fileName);
+    ChatMessage msg(displayText, true, ":/res/me.jpg");
+    m_chatModel->addMessage(msg);
+    ui->chatList->scrollToBottom();
+}
+
+void MainWindow::onFileTransferProgress(const QString &fileId, int percent, qint64 sent, qint64 total)
+{
+    Q_UNUSED(fileId)
+    Q_UNUSED(sent)
+    Q_UNUSED(total)
+
+    // 后续完善进度条
+    qDebug() << "[UI] Transfer progress:" << percent << "%";
+}
+
+void MainWindow::onFileTransferCompleted(const QString &fileId)
+{
+    Q_UNUSED(fileId)
+
+    QMessageBox::information(this, "文件传输", "文件传输完成！");
+    qDebug() << "[UI] File transfer completed:" << fileId;
+}
+
+void MainWindow::onFileTransferFailed(const QString &fileId, const QString &error)
+{
+    Q_UNUSED(fileId)
+
+    QMessageBox::warning(this, "传输失败", "文件传输失败: " + error);
+    qDebug() << "[UI] File transfer failed:" << fileId << error;
+}
+
+void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk, int chunkIndex, int totalChunks, int friendId)
+{
+    // 构建文件分片包
+    FileChunk chunkHeader;
+    memset(&chunkHeader,0,sizeof(FileChunk));
+
+    strncpy(chunkHeader.fileId,fileId.toUtf8().constData(),63);
+    chunkHeader.chunkIndex = chunkIndex;
+    chunkHeader.chunkSize = chunk.size();
+
+    // 组装包体：头部 + 实际数据
+    QByteArray body;
+    body.append((char*)&chunkHeader,sizeof(FileChunk));
+    body.append(chunk);
+
+    QByteArray packet = makePacket(MSG_FILE_CHUNK,body,0,friendId);
+    NetworkManager::instance().sendRow(packet);
+
+    if (chunkIndex % 10 == 0) {  // 每10个分片打印一次日志
+        qDebug() << "[Network] Sent chunk" << chunkIndex << "/" << totalChunks
+                 << "for file" << fileId;
+    }
+}
+
+void MainWindow::onFileReceiveChunk(const QString &fileId, int chunkIndex, const QByteArray &chunk)
+{
+    FileReceiver::instance().receiveChunk(fileId,chunkIndex,chunk);
+}
+
+void MainWindow::onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total)
+{
+    // 可以在UI上显示进度条
+    qDebug() << "[UI] Receive progress:" << percent << "%"
+             << received << "/" << total << "bytes";
+}
+
+void MainWindow::onFileReceiveCompleted(const QString &fileId, const QString &savePath)
+{
+    QMessageBox::information(this, "文件接收完成",
+                             QString("文件已保存到:\n%1").arg(savePath));
+    qDebug() << "[UI] File receive completed:" << savePath;
+}
+
+void MainWindow::onFileReceiveFailed(const QString &fileId, const QString &error)
+{
+    QMessageBox::warning(this, "接收失败", "文件接收失败: " + error);
 }
 
 void MainWindow::on_btnSend_clicked()
@@ -858,7 +1029,7 @@ void MainWindow::on_btnSend_clicked()
     body.append((char)SUB_TEXT); // 必须加上 SUB_TEXT (通常定义为 1 或 0)
     body.append(text.toUtf8());
 
-    // 打包信息发送给服务器 (注意：这里传 body 而不是 text.toUtf8())
+    // 打包信息发送给服务器 (这里传 body 而不是 text.toUtf8())
     QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
     NetworkManager::instance().sendRow(packet);
 
@@ -874,7 +1045,6 @@ void MainWindow::setCurrentUserId(int newCurrentUserId)
 {
     m_currentUserId = newCurrentUserId;
 }
-
 
 void MainWindow::on_btnContact_clicked()
 {
@@ -931,5 +1101,53 @@ void MainWindow::on_btnImage_clicked()
     ChatMessage msg(imageData, true, ":/res/me.jpg");
     m_chatModel->addMessage(msg);
     ui->chatList->scrollToBottom();
+}
+
+void MainWindow::on_btnFile_clicked()
+{
+    if(m_currentFriendId == 0){
+        QMessageBox::warning(this, "提示", "请先选择一个好友");
+        return;
+    }
+
+    // 获取要发送的文件路径
+    QString filePath = QFileDialog::getOpenFileName(this,"选择文件","","所有文件(*.*)");
+
+    if(filePath.isEmpty()){
+        return;
+    }
+
+    // 获取文件信息
+    QFileInfo fileInfo(filePath);
+
+    // 先限制文件大小为100M
+    if(fileInfo.size() > 100 * 1024 * 1024){
+        QMessageBox::warning(this,"文件太大","文件大小不能超过100M");
+        return;
+    }
+
+    // 先生成文件id，等对方同意后再传输文件
+    QString fileId = FileTransferManager::instance().generateFileId(filePath);
+    m_pendingFileTransfers[fileId] = filePath;
+
+    // 先发送文件传输请求给对方
+    FileTransferReq req;
+    memset(&req,0,sizeof(FileTransferReq));
+
+    // 文件名和文件大小
+    strncpy(req.fileName,fileInfo.fileName().toUtf8().constData(),255);
+    req.fileName[255] = '\0';
+    req.fileSize = fileInfo.size();
+
+    // 分片总数（每片64KB）
+    quint64 chunkSize = 64 * 1024;
+    req.totalChunks = (fileInfo.size() + chunkSize - 1) / chunkSize;
+
+    strncpy(req.fileId,fileId.toUtf8().constData(),63);
+    req.fileId[63] = '\0';
+
+    // 发送请求
+    QByteArray packet = makePacket(MSG_FILE_TRANSFER_REQ,QByteArray((char*)&req,sizeof(FileTransferReq)),0,m_currentFriendId);
+    NetworkManager::instance().sendRow(packet);
 }
 

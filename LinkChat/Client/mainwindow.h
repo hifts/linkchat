@@ -5,6 +5,7 @@
 #include "chatmodel.h"
 #include "packet.h"
 #include "contactdelegate.h"
+#include "filetransfermanager.h"
 
 #include <QListWidget>
 #include <QMouseEvent>
@@ -19,8 +20,6 @@ class MainWindow : public QWidget
     Q_OBJECT
 
 public:
-
-
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
@@ -100,6 +99,33 @@ private slots:
     // 刷新好友请求
     void updateNewFriendsPage();
 
+    // 处理文件发送请求信号
+    void onSigFileTransferRequest(const QString &fileId, const QString &fileName, qint64 fileSize, int senderId);
+
+    // 处理接收方是否接收文件信号
+    void onsigFileTransferResponse(const QString &fileId,bool accepted);
+
+    // 处理文件开始传输
+    void onFileTransferStarted(const QString &fileId, const QString &fileName);
+
+    // 处理传输进度
+    void onFileTransferProgress(const QString &fileId, int percent, qint64 sent, qint64 total);
+
+    // 处理文件传输完成
+    void onFileTransferCompleted(const QString &fileId);
+
+    // 处理文件传输失败
+    void onFileTransferFailed(const QString &fileId, const QString &error);
+
+    // 处理发送分片
+    void onSendFileChunk(const QString &fileId, const QByteArray &chunk, int chunkIndex, int totalChunks, int friendId);
+
+    // 处理接收文件信号
+    void onFileReceiveChunk(const QString &fileId,int chunkIndex,const QByteArray &chunk);
+    void onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total);
+    void onFileReceiveCompleted(const QString &fileId,const QString &savePath);
+    void onFileReceiveFailed(const QString &fileId, const QString &error);
+
     void on_btnSend_clicked();
 
     void on_btnContact_clicked();
@@ -107,6 +133,8 @@ private slots:
     void on_btnNewFriends_clicked();
 
     void on_btnImage_clicked();
+
+    void on_btnFile_clicked();
 
 private:
     Ui::MainWindow *ui;
@@ -132,6 +160,8 @@ private:
     // 待处理的好友申请
     QList<FriendRequest> m_pendingRequests;
 
+    // 用于暂存等待对方同意的文件传输
+    QMap<QString, QString> m_pendingFileTransfers;
 };
 
 #endif // MAINWINDOW_H

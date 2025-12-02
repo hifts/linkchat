@@ -242,6 +242,54 @@ void ClientSocket::onReadyRead()
             }
             break;
         }
+        case MSG_FILE_TRANSFER_REQ:{
+            // 文件传输请求 - 直接转发给目标用户
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if(targetSocket){
+                this->writePacket(targetSocket,MSG_FILE_TRANSFER_REQ,bodyData,this->m_uid,targetId);
+            }else{
+                // 不在线
+                qDebug() << "[Server] Target user" << targetId << "is offline";
+            }
+            break;
+        }
+        case MSG_FILE_TRANSFER_RESP: {
+            // 文件传输响应 - 转发给发送者
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if (targetSocket) {
+                this->writePacket(targetSocket, MSG_FILE_TRANSFER_RESP,bodyData, this->m_uid, targetId);
+
+                FileTransferResp *resp = (FileTransferResp*)bodyData.data();
+                qDebug() << "[Server] Forwarded file transfer response, accepted:"
+                         << (resp->accepted == 1);
+            }
+            break;
+        }
+        case MSG_FILE_CHUNK:{
+            // 文件传输分片 - 转发给发送者
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if(targetSocket){
+                this->writePacket(targetSocket,MSG_FILE_CHUNK,bodyData,this->m_uid,targetId);
+
+                // 每100个分片打印一次日志，避免日志刷屏
+                FileChunk *chunk = (FileChunk*)bodyData.data();
+                if (chunk->chunkIndex % 100 == 0) {
+                    qDebug() << "[Server] Forwarding file chunk" << chunk->chunkIndex
+                             << "from user" << this->m_uid << "to user" << targetId;
+                }
+            }else{
+                // 目标用户不在线，记录日志
+                qWarning() << "[Server] Target user" << targetId
+                           << "is offline. Cannot forward file chunk.";
+            }
+            break;
+        }
         default:
             break;
         }

@@ -30,6 +30,9 @@ else()
 find_package(Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt5 REQUIRED COMPONENTS Core)
 
     add_executable(Client
         ${PROJECT_SOURCES}
@@ -41,6 +44,9 @@ find_package(Qt5 REQUIRED COMPONENTS Core)
         chat_ui/chatdelegate.h chat_ui/chatdelegate.cpp
         res.qrc
         chat_ui/contactdelegate.h chat_ui/contactdelegate.cpp
+        filetransferthread.h filetransferthread.cpp
+        filetransfermanager.h filetransfermanager.cpp
+        filereceiver.h filereceiver.cpp
 
 
     )
@@ -53,6 +59,9 @@ target_link_libraries(Client PRIVATE
     Qt${QT_VERSION_MAJOR}::Core
     LinkChatCommon              # 连接common里的协议
 )
+target_link_libraries(Client PRIVATE Qt5::Core)
+target_link_libraries(Client PRIVATE Qt5::Core)
+target_link_libraries(Client PRIVATE Qt5::Core)
 target_link_libraries(Client PRIVATE Qt5::Core)
 target_link_libraries(Client PRIVATE Qt5::Core)
 target_link_libraries(Client PRIVATE Qt5::Core)

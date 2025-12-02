@@ -24,8 +24,12 @@ enum MessageType{
     MSG_ADD_FRIEND_RESP,            // 处理好友回复（好友同意/拒绝）
     MSG_ADD_FRIEND_RESULT,          // 添加好友响应
     MSG_CHAT_TEXT,                  // 文本聊天
-    // MSG_CHAT_IMAGE,                 // 图片
-    MSG_FILE_HEADER                 // 文件传输
+    // MSG_CHAT_IMAGE,              // 图片
+    MSG_FILE_TRANSFER_REQ,          // 文件传输请求
+    MSG_FILE_TRANSFER_RESP,         // 文件传输响应
+    MSG_FILE_CHUNK,                 // 文件分片数据
+    MSG_FILE_TRANSFER_ACK,          // 文件传输确认
+    MSG_FILE_TRANSFER_CANCEL        // 取消文件传输
 };
 
 // 定义协议头部
@@ -42,7 +46,8 @@ struct PDUHeader
 // body 第一个字节表示消息子类型(文本消息/图片消息)
 enum ChatSubType : char {
     SUB_TEXT  = 0,
-    SUB_IMAGE = 1
+    SUB_IMAGE = 1,
+    SUB_FILE = 2
 };
 
 // 登录/注册 请求包
@@ -94,6 +99,40 @@ struct AddFriendNotify {
 struct AddFriendResp {
     int requesterId;
     bool accepted;      // true=同意，false=拒绝
+};
+
+// 文件传输请求结构
+struct FileTransferReq {
+    char fileName[256];      // 文件名
+    quint64 fileSize;        // 文件大小
+    quint32 totalChunks;     // 总分片数
+    char fileId[64];         // 文件唯一标识(MD5或UUID)
+};
+
+// 文件传输响应结构
+struct FileTransferResp {
+    char fileId[64];         // 文件ID
+    quint8 accepted;         // 是否接受 1=接受 0=拒绝
+};
+
+// 文件分片数据结构
+struct FileChunk {
+    char fileId[64];         // 文件ID
+    quint32 chunkIndex;      // 当前分片索引
+    quint32 chunkSize;       // 当前分片大小
+    // 后面跟着实际的文件数据
+};
+
+// 文件传输确认结构
+struct FileTransferAck {
+    char fileId[64];         // 文件ID
+    quint32 chunkIndex;      // 已接收的分片索引
+};
+
+// 文件传输取消结构
+struct FileTransferCancel {
+    char fileId[64];         // 文件ID
+    quint8 reason;           // 取消原因 0=用户取消 1=错误
 };
 
 QByteArray makePacket(uint32_t type, const QByteArray& body, uint32_t src = 0, uint32_t dest = 0);
