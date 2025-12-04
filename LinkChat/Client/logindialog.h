@@ -29,7 +29,7 @@ private slots:
 
     void on_btnClose_clicked();
 
-    void onSigLoginResult(bool success,int uid);
+    void onSigLoginResult(bool success,int uid,int errorCode);
 
 private:
     Ui::LoginDialog *ui;

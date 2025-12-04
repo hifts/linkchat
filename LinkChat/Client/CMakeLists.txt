@@ -47,6 +47,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core)
         filetransferthread.h filetransferthread.cpp
         filetransfermanager.h filetransfermanager.cpp
         filereceiver.h filereceiver.cpp
+        groupdialog.h groupdialog.cpp groupdialog.ui
 
 
     )

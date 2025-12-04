@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 #include "networkmanager.h"
 #include "filereceiver.h"
+#include "groupdialog.h"
 
 #include <QBuffer>
 #include <QFileDialog>
@@ -289,6 +290,20 @@ void MainWindow::initUI()
     }
     QLineEdit#searchEdit:focus {
         background-color: #202225; /* 保持颜色 */
+        color: white;
+    }
+
+    /* 加号按钮样式 */
+    QPushButton#btnGroup {
+        background-color: #202225; /* 与搜索框同色或稍浅 */
+        color: #b9bbbe;
+        border-radius: 4px;
+        font-size: 20px;
+        font-weight: bold;
+        margin: 10px 10px 0px 5px; /* 上 右 下 左 */
+    }
+    QPushButton#btnGroup:hover {
+        background-color: #5865F2; /* 悬停变蓝 */
         color: white;
     }
 
@@ -1149,5 +1164,27 @@ void MainWindow::on_btnFile_clicked()
     // 发送请求
     QByteArray packet = makePacket(MSG_FILE_TRANSFER_REQ,QByteArray((char*)&req,sizeof(FileTransferReq)),0,m_currentFriendId);
     NetworkManager::instance().sendRow(packet);
+}
+
+
+void MainWindow::on_btnGroup_clicked()
+{
+    // 获取好友数据
+    QList<FriendSelectInfo> friendList;
+    int count = ui->contactList->count();
+    for (int i = 0; i < count; ++i) {
+        QListWidgetItem *item = ui->contactList->item(i);
+        int uid = item->data(ContactDelegate::RoleStatus).toInt();
+        QString name = item->data(ContactDelegate::RoleName).toString();
+        friendList.append({uid,name});
+    }
+
+    // 弹出创建群聊窗口
+    GroupDialog groupDialog(friendList,this);
+    if(groupDialog.exec() == QDialog::Accepted){
+        QString groupName = groupDialog.getGroupName();
+        QList<int> memberIds = groupDialog.getSelctFriendIds();
+        // TODO 发送创建群聊请求
+    }
 }
 

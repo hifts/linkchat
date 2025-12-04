@@ -74,14 +74,21 @@ void ClientSocket::onReadyRead()
 
             // 登录成功就记录下当前socket属于哪个用户的以及用户名
             if(ok){
+
+                if(TcpServer::instance().isOnline(uid)){
+                    resp.result = 2;
+                    this->write(makePacket(MSG_LOGIN_RESP,QByteArray((char*)&resp,sizeof(LoginResp))));
+                    break;
+                }
+
+                this->write(makePacket(MSG_LOGIN_RESP,QByteArray((char*)&resp,sizeof(LoginResp))));
+
                 this->m_uid = uid;
                 this->m_userName = name;
 
                 // 处理用户上线
                 TcpServer::instance().userLogin(uid,this);
                 notifyFriends(1);
-
-                this->write(makePacket(MSG_LOGIN_RESP,QByteArray((char*)&resp,sizeof(LoginResp))));
 
                 // 登录成功后，推送离线好友请求和离线消息
                 auto pengingRequests = DBManager::instance().getPendingRequests(uid);

@@ -136,6 +136,8 @@ private slots:
 
     void on_btnFile_clicked();
 
+    void on_btnGroup_clicked();
+
 private:
     Ui::MainWindow *ui;
 

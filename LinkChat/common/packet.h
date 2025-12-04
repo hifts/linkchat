@@ -29,7 +29,23 @@ enum MessageType{
     MSG_FILE_TRANSFER_RESP,         // 文件传输响应
     MSG_FILE_CHUNK,                 // 文件分片数据
     MSG_FILE_TRANSFER_ACK,          // 文件传输确认
-    MSG_FILE_TRANSFER_CANCEL        // 取消文件传输
+    MSG_FILE_TRANSFER_CANCEL,       // 取消文件传输
+
+    // 群聊协议
+    MSG_CREATE_GROUP_REQ,           // 创建群聊请求
+    MSG_CREATE_GROUP_RESP,          // 创建群聊响应
+    MSG_GROUP_LIST_REQ,             // 获取群列表请求
+    MSG_GROUP_LIST_RESP,            // 获取群列表响应
+    MSG_GROUP_MEMBER_LIST_REQ,      // 获取群成员列表请求
+    MSG_GROUP_MEMBER_LIST_RESP,     // 获取群成员列表响应
+    MSG_INVITE_TO_GROUP_REQ,        // 邀请加入群聊请求
+    MSG_INVITE_TO_GROUP_NOTIFY,     // 邀请加入群聊通知
+    MSG_REMOVE_FROM_GROUP_REQ,      // 移除群成员请求
+    MSG_REMOVE_FROM_GROUP_NOTIFY,   // 移除群成员通知
+    MSG_LEAVE_GROUP_REQ,            // 退出群聊请求
+    MSG_GROUP_CHAT_TEXT,            // 群聊消息
+    MSG_GROUP_CHAT_HISTORY_REQ,     // 群聊历史消息请求
+    MSG_GROUP_CHAT_HISTORY_RESP     // 群聊历史消息响应
 };
 
 // 定义协议头部
@@ -60,7 +76,7 @@ struct LoginReq
 // 登录/注册 响应包
 struct LoginResp
 {
-    int result;             // 0=失败，1=成功
+    int result;             // 0=失败，1=成功,2=已在线
     int userId;             // 请求成功返回用户id
 };
 
@@ -133,6 +149,65 @@ struct FileTransferAck {
 struct FileTransferCancel {
     char fileId[64];         // 文件ID
     quint8 reason;           // 取消原因 0=用户取消 1=错误
+};
+
+// 创建群聊请求结构
+struct CreateGroupReq {
+    char groupName[64];     // 群名称
+};
+
+// 创建群聊响应结构
+struct CreateGroupResp {
+    int result;             // 0=失败，1=成功
+    int groupId;            // 创建成功返回群ID
+};
+
+// 群信息结构
+struct GroupInfo {
+    int groupId;            // 群ID
+    char groupName[64];     // 群名称
+    int memberCount;        // 成员数量
+    char creatorName[32];   // 创建者名称
+};
+
+// 群成员信息结构
+struct GroupMemberInfo {
+    int userId;             // 用户ID
+    char userName[32];      // 用户名
+    int role;               // 角色：0=普通成员，1=管理员，2=群主
+    int status;             // 在线状态：0=离线，1=在线
+};
+
+// 邀请进群请求结构
+struct InviteToGroupReq {
+    int groupId;            // 群ID
+    int targetUserId;       // 被邀请的用户ID
+};
+
+// 邀请进群通知结构
+struct InviteToGroupNotify {
+    int groupId;            // 群ID
+    char groupName[64];     // 群名称
+    int inviterId;          // 邀请人ID
+    char inviterName[32];   // 邀请人名称
+};
+
+// 移除群成员请求结构
+struct RemoveFromGroupReq {
+    int groupId;            // 群ID
+    int targetUserId;       // 被移除的用户ID
+};
+
+// 移除群成员通知结构
+struct RemoveFromGroupNotify {
+    int groupId;            // 群ID
+    char groupName[64];     // 群名称
+    int removedBy;          // 操作人ID
+};
+
+// 退出群聊请求结构
+struct LeaveGroupReq {
+    int groupId;            // 群ID
 };
 
 QByteArray makePacket(uint32_t type, const QByteArray& body, uint32_t src = 0, uint32_t dest = 0);

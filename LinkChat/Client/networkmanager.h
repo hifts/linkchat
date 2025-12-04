@@ -36,7 +36,7 @@ signals:
     void sigRegisterResult(bool success);
 
     // 登录是否成功信号
-    void sigLoginResult(bool success,int uid);
+    void sigLoginResult(bool success,int uid,int errorCode = 0);
 
     void sigFriendListReceived(QList<FriendInfo> list);
 

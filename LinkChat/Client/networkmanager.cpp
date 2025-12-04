@@ -72,7 +72,18 @@ void NetworkManager::onReadyRead()
         }
         case MSG_LOGIN_RESP:{
             LoginResp *resp = (LoginResp*)body.data();
-            emit sigLoginResult(resp->result == 1,resp->userId);
+            int result = resp->result;
+            bool ok = (result == 1);
+            int uid = resp->userId;
+
+            int errorCode = 0;
+            if(result == 2){
+                errorCode = 2;      // 已在其他设备登录
+            }else if(result == 0){
+                errorCode = 1;      // 用户名或密码错误
+            }
+
+            emit sigLoginResult(ok,uid,errorCode);
             break;
         }
         case MSG_FRIEND_LIST_RESP:{

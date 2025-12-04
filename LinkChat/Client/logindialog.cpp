@@ -16,7 +16,7 @@ LoginDialog::LoginDialog(QWidget *parent)
     connect(&NetworkManager::instance(),&NetworkManager::sigLoginResult,this,&LoginDialog::onSigLoginResult);
 
     // 给控件起名（为了防止样式冲突，确保你在 Designer 里也是这些名字）
-    ui->lblTitle->setObjectName("lblTitle"); // 假设标题Label叫 lblTitle
+    ui->lblTitle->setObjectName("lblTitle");
     ui->btnClose->setObjectName("btnClose");
     ui->btnLogin->setObjectName("btnLogin");
     ui->btnReg->setObjectName("btnReg");
@@ -181,7 +181,7 @@ void LoginDialog::on_btnClose_clicked()
     this->reject();
 }
 
-void LoginDialog::onSigLoginResult(bool success, int uid)
+void LoginDialog::onSigLoginResult(bool success, int uid,int errorCode)
 {
     if(success){
         // 保存用户id
@@ -190,7 +190,13 @@ void LoginDialog::onSigLoginResult(bool success, int uid)
         // QMessageBox::information(this,"提示","登录成功");
         this->accept();
     }else{
-        QMessageBox::warning(this,"登录失败","用户名或密码错误");
+        QString msg;
+        if(errorCode == 2){
+            msg = "该账号已在其他设备登录，禁止多端登录！";
+        }else{
+            msg = "用户名或密码错误";
+        }
+        QMessageBox::warning(this,"登录失败",msg);
     }
 }
 
