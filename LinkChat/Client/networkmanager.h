@@ -6,6 +6,7 @@
 
 #include <QObject>
 #include <QTcpSocket>
+#include <tuple>
 
 class NetworkManager : public QObject
 {
@@ -65,6 +66,24 @@ signals:
 
     // 接收到分片数据
     void receiveChunk(const QString &fileId,int chunkIndex, const QByteArray &data);
+
+    // 创建群聊响应
+    void sigCreateGroupResult(bool success, int groupId);
+
+    // 群列表接收
+    void sigGroupListReceived(QList<GroupInfo> list);
+
+    // 群成员列表接收
+    void sigGroupMemberListReceived(int groupId, QList<GroupMemberInfo> list);
+
+    // 群聊消息接收（含发送者信息）
+    void sigGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body);
+
+    // 群聊历史消息接收
+    void sigGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray>>& history);
+
+    // 邀请入群通知
+    void sigInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
 };
 
 #endif // NETWORKMANAGER_H

@@ -30,6 +30,9 @@ GroupDialog::GroupDialog(const QList<FriendSelectInfo>& friends,QWidget *parent)
 
     connect(ui->listWidget,&QListWidget::itemChanged,this,&GroupDialog::updateSelectionCount);
 
+    // 监听输入框文本变化（查找用户输入框）
+    connect(ui->editUserName, &QLineEdit::textChanged, this, &GroupDialog::onSearchTextChanged);
+
     initUI();
 }
 
@@ -70,6 +73,24 @@ void GroupDialog::updateSelectionCount()
     }
 
     ui->lbSelect->setText(QString("已选择%1人").arg(count));
+}
+
+void GroupDialog::onSearchTextChanged(const QString &text)
+{
+    QString keyword = text.trimmed().toLower();
+
+    for (int i = 0; i < ui->listWidget->count(); ++i) {
+        QListWidgetItem *item = ui->listWidget->item(i);
+        QString friendName = item->text().toLower();
+
+        // 如果关键字为空，显示所有项
+        // 否则只显示包含关键字的项
+        if (keyword.isEmpty() || friendName.contains(keyword)) {
+            item->setHidden(false);
+        } else {
+            item->setHidden(true);
+        }
+    }
 }
 
 void GroupDialog::initUI()

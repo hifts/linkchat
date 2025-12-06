@@ -32,6 +32,10 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         return msg.type;
     case RoleImage:
         return msg.image;
+    case RoleSenderName:
+        return msg.senderName;
+    case RoleIsGroupChat:
+        return msg.isGroupChat;
     default:
         return QVariant();
     }

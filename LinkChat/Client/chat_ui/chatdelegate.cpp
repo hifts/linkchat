@@ -11,16 +11,19 @@ ChatDelegate::ChatDelegate(QObject *parent)
 QSize ChatDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     MsgType type = (MsgType)index.data(ChatModel::RoleType).toInt();
+    bool isGroupChat = index.data(ChatModel::RoleIsGroupChat).toBool();
+    bool isMine = index.data(ChatModel::RoleIsMine).toBool();
+    int senderNameHeight = (isGroupChat && !isMine) ? 18 : 0; // 群聊非自己的消息显示发送者用户名
 
     if (type == TypeText) {
         QString text = index.data(ChatModel::RoleContent).toString();
         QFontMetrics fm(option.font);
         int maxW = m_maxWidth - m_avatarSize - m_margin * 3;
         QRect r = fm.boundingRect(0,0,maxW,10000,Qt::TextWordWrap,text);
-        int h = r.height() + m_bubblePadding*2 + m_margin*2;
-        return QSize(0, qMax(h, m_avatarSize + m_margin*2));
+        int h = r.height() + m_bubblePadding*2 + m_margin*2 + senderNameHeight;
+        return QSize(0, qMax(h, m_avatarSize + m_margin*2 + senderNameHeight));
     } else {
-        return QSize(0, m_maxImageHeight + m_margin*2 + 20);
+        return QSize(0, m_maxImageHeight + m_margin*2 + 20 + senderNameHeight);
     }
 }
 
@@ -32,8 +35,11 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
     bool isMine = index.data(ChatModel::RoleIsMine).toBool();
     MsgType msgType = (MsgType)index.data(ChatModel::RoleType).toInt();
     QString avatarPath = index.data(ChatModel::RoleAvatar).toString();
+    bool isGroupChat = index.data(ChatModel::RoleIsGroupChat).toBool();
+    QString senderName = index.data(ChatModel::RoleSenderName).toString();
 
     QRect rect = option.rect;
+    int senderNameHeight = (isGroupChat && !isMine) ? 18 : 0; // 群聊非自己的消息显示发送者用户名
 
     // 1. 绘制头像（不变）
     QRect avatarRect = isMine
@@ -61,8 +67,21 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
         contentHeight = textRect.height() + m_bubblePadding * 2;
 
         contentRect = isMine
-                          ? QRect(avatarRect.left() - m_margin - contentWidth, rect.top() + m_margin, contentWidth, contentHeight)
-                          : QRect(avatarRect.right() + m_margin, rect.top() + m_margin, contentWidth, contentHeight);
+                          ? QRect(avatarRect.left() - m_margin - contentWidth, rect.top() + m_margin + senderNameHeight, contentWidth, contentHeight)
+                          : QRect(avatarRect.right() + m_margin, rect.top() + m_margin + senderNameHeight, contentWidth, contentHeight);
+
+        // 群聊非自己的消息：在气泡上方显示发送者用户名
+        if (isGroupChat && !isMine && !senderName.isEmpty()) {
+            QFont nameFont = option.font;
+            nameFont.setPointSize(10);  // 字体稍大一点
+            nameFont.setBold(false);
+            painter->setFont(nameFont);
+            painter->setPen(QColor(0x8e9297)); // 浅灰色
+            // 与气泡保持 4px 的间距
+            QRect nameRect(contentRect.left() + 4, contentRect.top() - senderNameHeight - 2, contentRect.width(), senderNameHeight);
+            painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignBottom, senderName);
+            painter->setFont(option.font);
+        }
 
         // 画气泡
         painter->setBrush(isMine ? QColor(0x95ec69) : QColor(0xffffff));

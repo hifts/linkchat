@@ -336,3 +336,277 @@ QList<QPair<int, QByteArray>> DBManager::getAndClearOfflineMessages(int receiver
 
     return offlineMsgList;
 }
+
+// ============ 群聊相关实现 ============
+
+int DBManager::createGroup(const QString &groupName, int creatorId)
+{
+    if (groupName.isEmpty()) {
+        return -1;
+    }
+
+    QSqlQuery query(m_db);
+
+    // 开启事务
+    if (!m_db.transaction()) {
+        qCritical() << "Failed to start transaction for createGroup";
+        return -1;
+    }
+
+    // 创建群
+    query.prepare("INSERT INTO t_groups (group_name, creator_id) VALUES (?, ?)");
+    query.addBindValue(groupName);
+    query.addBindValue(creatorId);
+
+    if (!query.exec()) {
+        qCritical() << "Create group failed:" << query.lastError().text();
+        m_db.rollback();
+        return -1;
+    }
+
+    int groupId = query.lastInsertId().toInt();
+
+    // 添加创建者为群主
+    query.clear();
+    query.prepare("INSERT INTO t_group_members (group_id, user_id, role) VALUES (?, ?, 2)");
+    query.addBindValue(groupId);
+    query.addBindValue(creatorId);
+
+    if (!query.exec()) {
+        qCritical() << "Add creator to group failed:" << query.lastError().text();
+        m_db.rollback();
+        return -1;
+    }
+
+    // 创建群成功提交事务
+    m_db.commit();
+    qDebug() << "[DB] Created group:" << groupId << groupName << "by user:" << creatorId;
+    return groupId;
+}
+
+QList<GroupInfo> DBManager::getGroupList(int userId)
+{
+    QList<GroupInfo> list;
+    QSqlQuery query(m_db);
+
+    query.prepare(
+        "SELECT g.id, g.group_name, "
+        "(SELECT COUNT(*) FROM t_group_members WHERE group_id = g.id) as member_count, "
+        "(SELECT username FROM t_user WHERE id = g.creator_id) as creator_name "
+        "FROM t_groups g "
+        "JOIN t_group_members m ON g.id = m.group_id "
+        "WHERE m.user_id = ?"
+    );
+    query.addBindValue(userId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            GroupInfo info;
+            info.groupId = query.value(0).toInt();
+            QString name = query.value(1).toString();
+            strncpy(info.groupName, name.toUtf8().constData(), 63);
+            info.groupName[63] = '\0';
+            info.memberCount = query.value(2).toInt();
+            QString creatorName = query.value(3).toString();
+            strncpy(info.creatorName, creatorName.toUtf8().constData(), 31);
+            info.creatorName[31] = '\0';
+            list.append(info);
+        }
+    }
+
+    return list;
+}
+
+QList<GroupMemberInfo> DBManager::getGroupMembers(int groupId)
+{
+    QList<GroupMemberInfo> list;
+    QSqlQuery query(m_db);
+
+    query.prepare(
+        "SELECT u.id, u.username, m.role "
+        "FROM t_group_members m "
+        "JOIN t_user u ON m.user_id = u.id "
+        "WHERE m.group_id = ? "
+        "ORDER BY m.role DESC, m.join_time ASC"
+    );
+    query.addBindValue(groupId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            GroupMemberInfo info;
+            info.userId = query.value(0).toInt();
+            QString name = query.value(1).toString();
+            strncpy(info.userName, name.toUtf8().constData(), 31);
+            info.userName[31] = '\0';
+            info.role = query.value(2).toInt();
+            info.status = TcpServer::instance().isOnline(info.userId) ? 1 : 0;
+            list.append(info);
+        }
+    }
+
+    return list;
+}
+
+bool DBManager::addGroupMember(int groupId, int userId, int role)
+{
+    QSqlQuery query(m_db);
+    query.prepare("INSERT IGNORE INTO t_group_members (group_id, user_id, role) VALUES (?, ?, ?)");
+    query.addBindValue(groupId);
+    query.addBindValue(userId);
+    query.addBindValue(role);
+
+    if (!query.exec()) {
+        qCritical() << "Add group member failed:" << query.lastError().text();
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
+}
+
+bool DBManager::removeGroupMember(int groupId, int userId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM t_group_members WHERE group_id = ? AND user_id = ?");
+    query.addBindValue(groupId);
+    query.addBindValue(userId);
+
+    if (!query.exec()) {
+        qCritical() << "Remove group member failed:" << query.lastError().text();
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
+}
+
+QList<int> DBManager::getGroupMemberIds(int groupId)
+{
+    QList<int> list;
+    QSqlQuery query(m_db);
+    query.prepare("SELECT user_id FROM t_group_members WHERE group_id = ?");
+    query.addBindValue(groupId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            list.append(query.value(0).toInt());
+        }
+    }
+
+    return list;
+}
+
+void DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &content)
+{
+    QSqlQuery query(m_db);
+    query.prepare("INSERT INTO t_group_messages (group_id, sender_id, content) VALUES (?, ?, ?)");
+    query.addBindValue(groupId);
+    query.addBindValue(senderId);
+    query.addBindValue(content);
+
+    if (!query.exec()) {
+        qCritical() << "Save group message failed:" << query.lastError().text();
+    }
+}
+
+QList<std::tuple<int, QString, QByteArray>> DBManager::getGroupChatHistory(int groupId, int limit)
+{
+    QList<std::tuple<int, QString, QByteArray>> list;
+    QSqlQuery query(m_db);
+
+    query.prepare(
+        "SELECT m.sender_id, u.username, m.content "
+        "FROM t_group_messages m "
+        "JOIN t_user u ON m.sender_id = u.id "
+        "WHERE m.group_id = ? "
+        "ORDER BY m.send_time ASC "
+        "LIMIT ?"
+    );
+    query.addBindValue(groupId);
+    query.addBindValue(limit);
+
+    if (query.exec()) {
+        while (query.next()) {
+            int senderId = query.value(0).toInt();
+            QString senderName = query.value(1).toString();
+            QByteArray content = query.value(2).toByteArray();
+            list.append(std::make_tuple(senderId, senderName, content));
+        }
+    }
+
+    return list;
+}
+
+void DBManager::saveGroupOfflineMessage(int groupId, int senderId, int receiverId, const QByteArray &content)
+{
+    QSqlQuery query(m_db);
+    query.prepare("INSERT INTO t_group_offline_msg (group_id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)");
+    query.addBindValue(groupId);
+    query.addBindValue(senderId);
+    query.addBindValue(receiverId);
+    query.addBindValue(content);
+
+    if (!query.exec()) {
+        qCritical() << "Save group offline message failed:" << query.lastError().text();
+    } else {
+        qDebug() << "[DB] Group offline msg saved for user" << receiverId << "in group" << groupId;
+    }
+}
+
+QList<std::tuple<int, int, QString, QByteArray>> DBManager::getAndClearGroupOfflineMessages(int receiverId)
+{
+    QList<std::tuple<int, int, QString, QByteArray>> list;
+    QSqlQuery query(m_db);
+
+    // 查询离线消息并关联发送者用户名
+    query.prepare(
+        "SELECT o.group_id, o.sender_id, u.username, o.content "
+        "FROM t_group_offline_msg o "
+        "JOIN t_user u ON o.sender_id = u.id "
+        "WHERE o.receiver_id = ? "
+        "ORDER BY o.create_time ASC"
+    );
+    query.addBindValue(receiverId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            int groupId = query.value(0).toInt();
+            int senderId = query.value(1).toInt();
+            QString senderName = query.value(2).toString();
+            QByteArray content = query.value(3).toByteArray();
+            list.append(std::make_tuple(groupId, senderId, senderName, content));
+        }
+    }
+
+    // 删除已查询的离线消息
+    if (!list.isEmpty()) {
+        QSqlQuery delQuery(m_db);
+        delQuery.prepare("DELETE FROM t_group_offline_msg WHERE receiver_id = ?");
+        delQuery.addBindValue(receiverId);
+        delQuery.exec();
+    }
+
+    return list;
+}
+
+QString DBManager::getUserNameById(int userId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("SELECT username FROM t_user WHERE id = ?");
+    query.addBindValue(userId);
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toString();
+    }
+
+    return QString();
+}
+
+bool DBManager::isGroupMember(int groupId, int userId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("SELECT 1 FROM t_group_members WHERE group_id = ? AND user_id = ?");
+    query.addBindValue(groupId);
+    query.addBindValue(userId);
+
+    return query.exec() && query.next();
+}
+

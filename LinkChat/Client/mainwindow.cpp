@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "networkmanager.h"
+#include "filetransfermanager.h"
 #include "filereceiver.h"
 #include "groupdialog.h"
 
@@ -16,6 +17,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     setMouseTracking(true);
+    
+    // 安装事件过滤器到主窗口，用于处理子控件的鼠标事件
+    installEventFilter(this);
 
     //初始化界面
     initUI();
@@ -28,13 +32,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     connectSignalsAndSlots();
 
-    // 界面出来后刷新好友列表(向服务器请求好友信息)
+    // 界面出来后刷新好友列表和群列表(向服务器请求信息)
     // 使用 QTimer::singleShot 0ms 延时，确保构造函数执行完后再发包
     QTimer::singleShot(0,[](){
         // 发送空包即可，因为 Server 知道你是谁
         NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ,QByteArray());
+        NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ,QByteArray());
     });
-
 }
 
 MainWindow::~MainWindow()
@@ -110,9 +114,12 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
     }
 
     // 2. 如果只是移动鼠标 → 更新光标形状
-    updateCursorShape(pos);
+    // 只有在没有按下按钮时才更新光标
+    if (!(event->buttons() & Qt::LeftButton)) {
+        updateCursorShape(pos);
+    }
 
-    // 只有按住左键且不是调整窗口大小才处理
+    // 只有按住左键且不是调整窗口大小才处理窗口拖动
     if (event->buttons() & Qt::LeftButton && m_resizeDir == None) {
         // 移动窗口到鼠标当前位置减去偏移量
         move(event->globalPos() - m_dragPosition);
@@ -128,6 +135,25 @@ void MainWindow::mouseReleaseEvent(QMouseEvent *event)
         setCursor(Qt::ArrowCursor);
     }
     QWidget::mouseReleaseEvent(event);
+}
+
+void MainWindow::leaveEvent(QEvent *event)
+{
+    // 鼠标离开窗口时，如果不在调整大小，恢复箭头光标
+    if (m_resizeDir == None) {
+        setCursor(Qt::ArrowCursor);
+    }
+    QWidget::leaveEvent(event);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // 当鼠标进入任何子控件时，如果不在调整大小状态，恢复箭头光标
+    if (event->type() == QEvent::Enter && m_resizeDir == None) {
+        setCursor(Qt::ArrowCursor);
+    }
+    
+    return QWidget::eventFilter(watched, event);
 }
 
 void MainWindow::updateCursorShape(const QPoint &pos)
@@ -469,6 +495,13 @@ void MainWindow::connectSignalsAndSlots()
     connect(&FileReceiver::instance(),&FileReceiver::receiveProgress,this,&MainWindow::onFileReceiveProgress);
     connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,this,&MainWindow::onFileReceiveCompleted);
     connect(&FileReceiver::instance(),&FileReceiver::receiveFailed,this,&MainWindow::onFileReceiveFailed);
+
+    // ============ 群聊相关信号 ============
+    connect(&NetworkManager::instance(), &NetworkManager::sigGroupListReceived, this, &MainWindow::onGroupListReceived);
+    connect(&NetworkManager::instance(), &NetworkManager::sigGroupMsgReceived, this, &MainWindow::onGroupMsgReceived);
+    connect(&NetworkManager::instance(), &NetworkManager::sigGroupChatHistoryReceived, this, &MainWindow::onGroupChatHistoryReceived);
+    connect(&NetworkManager::instance(), &NetworkManager::sigCreateGroupResult, this, &MainWindow::onCreateGroupResult);
+    connect(&NetworkManager::instance(), &NetworkManager::sigInviteToGroupNotify, this, &MainWindow::onInviteToGroupNotify);
 }
 
 void MainWindow::sendFriendResponse(int requesterId, bool accepted)
@@ -521,71 +554,83 @@ void MainWindow::onFriendListReceived(QList<FriendInfo> list)
 
 void MainWindow::onContactListClicked(QListWidgetItem *item)
 {
-    int friendId = item->data(ContactDelegate::RoleStatus).toInt();
+    int id = item->data(ContactDelegate::RoleStatus).toInt();
     QString name = item->data(ContactDelegate::RoleName).toString();
     bool isFriend = item->data(ContactDelegate::RoleIsFriend).toBool();
 
-    if(friendId <= 0 || friendId == m_currentFriendId){
-        return;
-    }
+    // 判断是群聊还是私聊（负数ID表示群聊）
+    if (id < 0) {
+        // 群聊
+        int groupId = -id;
+        if (m_isGroupChat && m_currentGroupId == groupId) {
+            return; // 已经在当前群聊
+        }
 
-    m_currentFriendId = friendId;
-    ui->lblChatTitle->setText(name);
+        // 切换到群聊模式
+        m_isGroupChat = true;
+        m_currentGroupId = groupId;
+        m_currentFriendId = 0;
 
-    m_chatModel->clearMessages();
-
-    QByteArray body;
-    QDataStream ds(&body,QIODevice::WriteOnly);
-    ds.setByteOrder(QDataStream::LittleEndian);
-    ds << quint32(friendId);
-
-    NetworkManager::instance().sendMsg(MSG_CHAT_HISTORY_REQ,body);
-
-    // 如果点击的是当前已经在聊的好友，就不做处理
-    // if(friendId == m_currentFriendId) {
-    //     return;
-    // }
-
-    // // 如果之前有在跟人聊天(id!=0)，先把那个人的聊天记录存进 Map，前一个人的聊天记录
-    // if(m_currentFriendId != 0){
-    //     m_chatHistory[m_currentFriendId] = m_chatModel->getMessages();
-    // }
-
-    // // 更新当前聊天对象id
-    // this->m_currentFriendId = friendId;
-
-    // // 检查之前是否存有新好友聊天记录
-    // if(m_chatHistory.contains(friendId)){
-    //     // 如果有就直接设置到模型中
-    //     m_chatModel->setMessages(m_chatHistory[friendId]);
-    // }else{
-    //     // 如果没有，第一次聊天，清空模型
-    //     m_chatModel->clearMessages();
-    // }
-
-    item->setData(ContactDelegate::RoleUnread, 0);
-    ui->chatList->scrollToBottom();
-
-    if (isFriend) {
-        // 是好友：启用输入框和按钮，恢复颜色
         ui->lblChatTitle->setText(name);
+        m_chatModel->clearMessages();
+
+        // 请求群聊历史消息
+        QByteArray body;
+        QDataStream ds(&body, QIODevice::WriteOnly);
+        ds.setByteOrder(QDataStream::LittleEndian);
+        ds << quint32(groupId);
+        NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_HISTORY_REQ, body);
+
+        // 清除未读红点
+        item->setData(ContactDelegate::RoleUnread, 0);
+
+        // 启用输入
         ui->msgEdit->setEnabled(true);
-        ui->msgEdit->setPlaceholderText(""); // 清空提示
         ui->btnSend->setEnabled(true);
-        // 恢复发送按钮的蓝色
         ui->btnSend->setStyleSheet(
             "QPushButton { background-color: #5865F2; color: white; border-radius: 8px; padding: 5px 20px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4752c4; }"
-            );
+        );
     } else {
-        // 不是好友：禁用输入框和按钮，变灰
-        ui->lblChatTitle->setText("选择一个好友开始聊天");
-        ui->msgEdit->setEnabled(false);
-        ui->btnSend->setEnabled(false);
-        // 设置发送按钮为灰色
-        ui->btnSend->setStyleSheet(
-            "QPushButton { background-color: #40444b; color: #72767d; border-radius: 8px; padding: 5px 20px; font-weight: bold; border: none;}"
+        // 私聊
+        if (id <= 0 || id == m_currentFriendId) {
+            return;
+        }
+
+        // 切换到私聊模式
+        m_isGroupChat = false;
+        m_currentGroupId = 0;
+        m_currentFriendId = id;
+
+        ui->lblChatTitle->setText(name);
+        m_chatModel->clearMessages();
+
+        QByteArray body;
+        QDataStream ds(&body, QIODevice::WriteOnly);
+        ds.setByteOrder(QDataStream::LittleEndian);
+        ds << quint32(id);
+        NetworkManager::instance().sendMsg(MSG_CHAT_HISTORY_REQ, body);
+
+        item->setData(ContactDelegate::RoleUnread, 0);
+        ui->chatList->scrollToBottom();
+
+        if (isFriend) {
+            ui->lblChatTitle->setText(name);
+            ui->msgEdit->setEnabled(true);
+            ui->msgEdit->setPlaceholderText("");
+            ui->btnSend->setEnabled(true);
+            ui->btnSend->setStyleSheet(
+                "QPushButton { background-color: #5865F2; color: white; border-radius: 8px; padding: 5px 20px; font-weight: bold; }"
+                "QPushButton:hover { background-color: #4752c4; }"
             );
+        } else {
+            ui->lblChatTitle->setText("选择一个好友开始聊天");
+            ui->msgEdit->setEnabled(false);
+            ui->btnSend->setEnabled(false);
+            ui->btnSend->setStyleSheet(
+                "QPushButton { background-color: #40444b; color: #72767d; border-radius: 8px; padding: 5px 20px; font-weight: bold; border: none;}"
+            );
+        }
     }
 }
 
@@ -1032,27 +1077,190 @@ void MainWindow::onFileReceiveFailed(const QString &fileId, const QString &error
     QMessageBox::warning(this, "接收失败", "文件接收失败: " + error);
 }
 
+void MainWindow::onGroupListReceived(QList<GroupInfo> list)
+{
+    // 在好友列表下方追加群聊列表（用不同样式区分）
+    for (const auto &info : list) {
+        m_groupIds.insert(info.groupId);
+
+        QListWidgetItem *item = new QListWidgetItem(ui->contactList);
+        item->setSizeHint(QSize(200, 60));
+
+        // 使用负数ID来区分群聊和好友
+        item->setData(ContactDelegate::RoleStatus, -info.groupId);  // 负数表示群ID
+        item->setData(ContactDelegate::RoleName, QString::fromUtf8(info.groupName));
+        item->setData(ContactDelegate::RoleIsFriend, true);  // 群聊也标记为true以允许点击
+
+        QString displayText = QString("[群聊] %1 (%2人)").arg(QString::fromUtf8(info.groupName)).arg(info.memberCount);
+        item->setText(displayText);
+
+        ui->contactList->addItem(item);
+    }
+}
+
+void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body)
+{
+    if (body.isEmpty()) return;
+
+    char subType = body[0];
+    QByteArray realData = body.mid(1);
+
+    bool isMe = (senderId == m_currentUserId);
+    QString avatar = isMe ? ":/res/me.jpg" : ":/res/you.jpeg";
+
+    if (subType == SUB_TEXT) {
+        QString text = QString::fromUtf8(realData);
+        ChatMessage msg(text, isMe, avatar, senderName);
+
+        // 如果当前正在这个群聊
+        if (m_isGroupChat && m_currentGroupId == groupId) {
+            m_chatModel->addMessage(msg);
+            ui->chatList->scrollToBottom();
+        } else {
+            // 存入历史记录
+            m_groupChatHistory[groupId].append(msg);
+
+            // 显示未读红点：找到群聊列表项并增加未读计数
+            for (int i = 0; i < ui->contactList->count(); ++i) {
+                QListWidgetItem *item = ui->contactList->item(i);
+                int itemId = item->data(ContactDelegate::RoleStatus).toInt();
+
+                // 负数ID表示群聊
+                if (itemId < 0 && -itemId == groupId) {
+                    int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
+                    item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                    break;
+                }
+            }
+        }
+    } else if (subType == SUB_IMAGE) {
+        ChatMessage msg(realData, isMe, avatar, senderName);
+
+        if (m_isGroupChat && m_currentGroupId == groupId) {
+            m_chatModel->addMessage(msg);
+            ui->chatList->scrollToBottom();
+        } else {
+            m_groupChatHistory[groupId].append(msg);
+
+            // 显示未读红点
+            for (int i = 0; i < ui->contactList->count(); ++i) {
+                QListWidgetItem *item = ui->contactList->item(i);
+                int itemId = item->data(ContactDelegate::RoleStatus).toInt();
+
+                if (itemId < 0 && -itemId == groupId) {
+                    int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
+                    item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray>>& history)
+{
+    if (!m_isGroupChat || groupId != m_currentGroupId) return;
+
+    for (const auto &item : history) {
+        int senderId = std::get<0>(item);
+        QString senderName = std::get<1>(item);
+        QByteArray rawBody = std::get<2>(item);
+
+        if (rawBody.isEmpty()) continue;
+
+        bool isMe = (senderId == m_currentUserId);
+        QString avatar = isMe ? ":/res/me.jpg" : ":/res/you.jpeg";
+
+        char msgType = rawBody[0];
+        QByteArray realContent = rawBody.mid(1);
+
+        if (msgType == SUB_IMAGE) {
+            ChatMessage msg(realContent, isMe, avatar, senderName);
+            m_chatModel->addMessage(msg);
+        } else {
+            QString text = QString::fromUtf8(realContent);
+            ChatMessage msg(text, isMe, avatar, senderName);
+            m_chatModel->addMessage(msg);
+        }
+    }
+    ui->chatList->scrollToBottom();
+}
+
+void MainWindow::onCreateGroupResult(bool success, int groupId)
+{
+    if (success) {
+        QMessageBox::information(this, "创建群聊", "群聊创建成功！");
+
+        // 邀请选中的好友加入群
+        for (int memberId : m_pendingGroupMembers) {
+            InviteToGroupReq req;
+            req.groupId = groupId;
+            req.targetUserId = memberId;
+            NetworkManager::instance().sendMsg(MSG_INVITE_TO_GROUP_REQ, QByteArray((char*)&req, sizeof(InviteToGroupReq)));
+        }
+        m_pendingGroupMembers.clear();
+
+        // 刷新群列表
+        NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
+    } else {
+        QMessageBox::warning(this, "创建群聊", "群聊创建失败！");
+    }
+}
+
+void MainWindow::onInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName)
+{
+    QString msg = QString("%1 邀请您加入群聊「%2」").arg(inviterName, groupName);
+    QMessageBox::information(this, "群聊邀请", msg);
+
+    // 刷新群列表
+    NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
+}
+
 void MainWindow::on_btnSend_clicked()
 {
     QString text = ui->msgEdit->toPlainText();
-    if(text.isEmpty() || m_currentFriendId == 0){
+    if (text.isEmpty()) {
         return;
     }
 
-    // 打包信息发送给服务器
-    QByteArray body;
-    body.append((char)SUB_TEXT); // 必须加上 SUB_TEXT (通常定义为 1 或 0)
-    body.append(text.toUtf8());
+    // 判断是群聊还是私聊
+    if (m_isGroupChat && m_currentGroupId > 0) {
+        // 群聊发送
+        GroupChatMessage header;
+        header.groupId = m_currentGroupId;
+        header.senderId = m_currentUserId;
+        strncpy(header.senderName, m_currentUserName.toUtf8().constData(), 31);
+        header.senderName[31] = '\0';
 
-    // 打包信息发送给服务器 (这里传 body 而不是 text.toUtf8())
-    QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
-    NetworkManager::instance().sendRow(packet);
+        QByteArray msgContent;
+        msgContent.append((char)SUB_TEXT);
+        msgContent.append(text.toUtf8());
 
-    // true=我
-    ChatMessage msg(text,true,":/res/me.jpg");
-    m_chatModel->addMessage(msg);
+        QByteArray body;
+        body.append((char*)&header, sizeof(GroupChatMessage));
+        body.append(msgContent);
+
+        NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_TEXT, body);
+
+        // 本地显示（群聊消息也显示自己的用户名）
+        ChatMessage msg(text, true, ":/res/me.jpg", m_currentUserName);
+        m_chatModel->addMessage(msg);
+    } else if (m_currentFriendId > 0) {
+        // 私聊发送
+        QByteArray body;
+        body.append((char)SUB_TEXT);
+        body.append(text.toUtf8());
+
+        QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
+        NetworkManager::instance().sendRow(packet);
+
+        ChatMessage msg(text, true, ":/res/me.jpg");
+        m_chatModel->addMessage(msg);
+    } else {
+        return;
+    }
+
     ui->chatList->scrollToBottom();
-
     ui->msgEdit->clear();
 }
 
@@ -1061,12 +1269,18 @@ void MainWindow::setCurrentUserId(int newCurrentUserId)
     m_currentUserId = newCurrentUserId;
 }
 
+void MainWindow::setCurrentUserName(const QString &name)
+{
+    m_currentUserName = name;
+}
+
 void MainWindow::on_btnContact_clicked()
 {
     if(ui->stackedWidget->currentIndex() != 0){
         ui->stackedWidget->setCurrentIndex(0);
         ui->searchEdit->clear();
         NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ, QByteArray());
+        NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ,QByteArray());
     }
 }
 
@@ -1085,7 +1299,13 @@ void MainWindow::on_btnImage_clicked()
     QString filePath = QFileDialog::getOpenFileName(
         this, "选择图片", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         );
-    if (filePath.isEmpty() || m_currentFriendId == 0) return;
+    if (filePath.isEmpty()) return;
+
+    // 检查是否在群聊或私聊模式
+    if (!m_isGroupChat && m_currentFriendId == 0) {
+        QMessageBox::warning(this, "提示", "请先选择一个好友或群聊");
+        return;
+    }
 
     QImage image(filePath);
     if (image.isNull()) {
@@ -1103,18 +1323,44 @@ void MainWindow::on_btnImage_clicked()
     buffer.open(QIODevice::WriteOnly);
     image.save(&buffer, "JPG", 85); // 压缩质量 85
 
-    // 构造带类型的 body：第一个字节是 SUB_IMAGE，其余是图片数据
-    QByteArray body;
-    body.append((char)SUB_IMAGE);
-    body.append(imageData);
+    // 判断是群聊还是私聊
+    if (m_isGroupChat && m_currentGroupId > 0) {
+        // 群聊发送图片
+        GroupChatMessage header;
+        header.groupId = m_currentGroupId;
+        header.senderId = m_currentUserId;
+        strncpy(header.senderName, m_currentUserName.toUtf8().constData(), 31);
+        header.senderName[31] = '\0';
 
-    // 发送！注意：这里用 sendRow，因为我们自己打包了 header
-    QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
-    NetworkManager::instance().sendRow(packet);
+        QByteArray msgContent;
+        msgContent.append((char)SUB_IMAGE);
+        msgContent.append(imageData);
 
-    // 本地立即显示
-    ChatMessage msg(imageData, true, ":/res/me.jpg");
-    m_chatModel->addMessage(msg);
+        QByteArray body;
+        body.append((char*)&header, sizeof(GroupChatMessage));
+        body.append(msgContent);
+
+        NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_TEXT, body);
+
+        // 本地显示（群聊消息也显示自己的用户名）
+        ChatMessage msg(imageData, true, ":/res/me.jpg", m_currentUserName);
+        m_chatModel->addMessage(msg);
+    } else if (m_currentFriendId > 0) {
+        // 私聊发送图片
+        QByteArray body;
+        body.append((char)SUB_IMAGE);
+        body.append(imageData);
+
+        QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
+        NetworkManager::instance().sendRow(packet);
+
+        // 本地立即显示
+        ChatMessage msg(imageData, true, ":/res/me.jpg");
+        m_chatModel->addMessage(msg);
+    } else {
+        return;
+    }
+
     ui->chatList->scrollToBottom();
 }
 
@@ -1184,7 +1430,19 @@ void MainWindow::on_btnGroup_clicked()
     if(groupDialog.exec() == QDialog::Accepted){
         QString groupName = groupDialog.getGroupName();
         QList<int> memberIds = groupDialog.getSelctFriendIds();
-        // TODO 发送创建群聊请求
+
+        // 发送创建群聊请求
+        CreateGroupReq req;
+        memset(&req, 0, sizeof(CreateGroupReq));
+        strncpy(req.groupName, groupName.toUtf8().constData(), 63);
+        req.groupName[63] = '\0';
+
+        // 保存待邀请的成员列表（创建成功后邀请）
+        m_pendingGroupMembers = memberIds;
+
+        NetworkManager::instance().sendMsg(MSG_CREATE_GROUP_REQ, QByteArray((char*)&req, sizeof(CreateGroupReq)));
     }
 }
+
+
 

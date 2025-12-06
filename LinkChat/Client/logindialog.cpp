@@ -184,8 +184,9 @@ void LoginDialog::on_btnClose_clicked()
 void LoginDialog::onSigLoginResult(bool success, int uid,int errorCode)
 {
     if(success){
-        // 保存用户id
+        // 保存用户id和用户名
         m_loginUid = uid;
+        m_loginUserName = ui->editUser->text().trimmed();
         qDebug()<<"登陆成功，uid:"<<uid;
         // QMessageBox::information(this,"提示","登录成功");
         this->accept();
@@ -203,5 +204,10 @@ void LoginDialog::onSigLoginResult(bool success, int uid,int errorCode)
 int LoginDialog::loginUid() const
 {
     return m_loginUid;
+}
+
+QString LoginDialog::loginUserName() const
+{
+    return m_loginUserName;
 }
 

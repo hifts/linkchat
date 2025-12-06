@@ -1,5 +1,4 @@
 #include "networkmanager.h"
-#include "filereceiver.h"
 
 #include <QDataStream>
 
@@ -225,6 +224,93 @@ void NetworkManager::onReadyRead()
 
             // 发送接收分片数据信号
             emit receiveChunk(fileId,chunkIndex,chunkData);
+            break;
+        }
+        case MSG_CREATE_GROUP_RESP: {
+            CreateGroupResp *resp = (CreateGroupResp*)body.data();
+            emit sigCreateGroupResult(resp->result == 1, resp->groupId);
+            break;
+        }
+        case MSG_GROUP_LIST_RESP: {
+            char *ptr = body.data();
+            int count = 0;
+            memcpy(&count, ptr, sizeof(int));
+            ptr += sizeof(int);
+
+            QList<GroupInfo> list;
+            for (int i = 0; i < count; ++i) {
+                GroupInfo info;
+                memcpy(&info, ptr, sizeof(GroupInfo));
+                list.append(info);
+                ptr += sizeof(GroupInfo);
+            }
+            emit sigGroupListReceived(list);
+            break;
+        }
+        case MSG_GROUP_MEMBER_LIST_RESP: {
+            char *ptr = body.data();
+            int groupId = 0;
+            int count = 0;
+            memcpy(&groupId, ptr, sizeof(int));
+            ptr += sizeof(int);
+            memcpy(&count, ptr, sizeof(int));
+            ptr += sizeof(int);
+
+            QList<GroupMemberInfo> list;
+            for (int i = 0; i < count; ++i) {
+                GroupMemberInfo info;
+                memcpy(&info, ptr, sizeof(GroupMemberInfo));
+                list.append(info);
+                ptr += sizeof(GroupMemberInfo);
+            }
+            emit sigGroupMemberListReceived(groupId, list);
+            break;
+        }
+        case MSG_GROUP_CHAT_TEXT: {
+            if (body.size() < (int)sizeof(GroupChatMessage)) break;
+
+            GroupChatMessage *msg = (GroupChatMessage*)body.data();
+            int groupId = msg->groupId;
+            int senderId = msg->senderId;
+            QString senderName = QString::fromUtf8(msg->senderName);
+            QByteArray content = body.mid(sizeof(GroupChatMessage));
+
+            emit sigGroupMsgReceived(groupId, senderId, senderName, content);
+            break;
+        }
+        case MSG_GROUP_CHAT_HISTORY_RESP: {
+            QDataStream in(body);
+            in.setByteOrder(QDataStream::LittleEndian);
+
+            quint32 groupId, count;
+            in >> groupId >> count;
+
+            QList<std::tuple<int, QString, QByteArray>> history;
+            for (quint32 i = 0; i < count; ++i) {
+                quint32 senderId, nameLen, contentLen;
+                in >> senderId >> nameLen;
+
+                QByteArray nameBytes(nameLen, '\0');
+                in.readRawData(nameBytes.data(), nameLen);
+                QString senderName = QString::fromUtf8(nameBytes);
+
+                in >> contentLen;
+                QByteArray content(contentLen, '\0');
+                in.readRawData(content.data(), contentLen);
+
+                history.append(std::make_tuple((int)senderId, senderName, content));
+            }
+            emit sigGroupChatHistoryReceived(groupId, history);
+            break;
+        }
+        case MSG_INVITE_TO_GROUP_NOTIFY: {
+            InviteToGroupNotify *notify = (InviteToGroupNotify*)body.data();
+            emit sigInviteToGroupNotify(
+                notify->groupId,
+                QString::fromUtf8(notify->groupName),
+                notify->inviterId,
+                QString::fromUtf8(notify->inviterName)
+            );
             break;
         }
         default:

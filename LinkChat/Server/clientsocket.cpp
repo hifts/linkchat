@@ -93,12 +93,14 @@ void ClientSocket::onReadyRead()
                 // 登录成功后，推送离线好友请求和离线消息
                 auto pengingRequests = DBManager::instance().getPendingRequests(uid);
                 auto offlineMsgs = DBManager::instance().getAndClearOfflineMessages(uid);
+                auto groupOfflineMsgs = DBManager::instance().getAndClearGroupOfflineMessages(uid);
 
                 // 逐条消息推送(延迟推送，避免客户端没初始化就推送导致消息缺失)
-                if(!offlineMsgs.isEmpty() || !pengingRequests.isEmpty()){
+                if(!offlineMsgs.isEmpty() || !pengingRequests.isEmpty() || !groupOfflineMsgs.isEmpty()){
                     QTimer::singleShot(500, this, [=](){
                         pushFriendRequests(pengingRequests);
                         pushOfflineMsgs(offlineMsgs);
+                        pushGroupOfflineMsgs(groupOfflineMsgs);
                     });
                 }
             }
@@ -297,6 +299,181 @@ void ClientSocket::onReadyRead()
             }
             break;
         }
+        case MSG_CREATE_GROUP_REQ: {
+            // 创建群聊请求
+            CreateGroupReq *req = (CreateGroupReq*)bodyData.data();
+            QString groupName = QString::fromUtf8(req->groupName);
+
+            int groupId = DBManager::instance().createGroup(groupName, this->m_uid);
+
+            // 回包
+            CreateGroupResp resp;
+            resp.result = (groupId > 0) ? 1 : 0;
+            resp.groupId = groupId;
+            this->write(makePacket(MSG_CREATE_GROUP_RESP, QByteArray((char*)&resp, sizeof(CreateGroupResp))));
+            break;
+        }
+        case MSG_GROUP_LIST_REQ: {
+            // 获取用户所在群列表
+            QList<GroupInfo> groupList = DBManager::instance().getGroupList(this->m_uid);
+
+            int count = groupList.size();
+            int bodyLen = sizeof(int) + count * sizeof(GroupInfo);
+
+            QByteArray respBody;
+            respBody.resize(bodyLen);
+            char *ptr = respBody.data();
+
+            memcpy(ptr, &count, sizeof(int));
+            ptr += sizeof(int);
+
+            for (const auto &info : groupList) {
+                memcpy(ptr, &info, sizeof(GroupInfo));
+                ptr += sizeof(GroupInfo);
+            }
+
+            this->write(makePacket(MSG_GROUP_LIST_RESP, respBody));
+            break;
+        }
+        case MSG_GROUP_MEMBER_LIST_REQ: {
+            // 获取群成员列表
+            if (bodyData.size() < 4) break;
+            int groupId = *(int*)bodyData.constData();
+
+            QList<GroupMemberInfo> memberList = DBManager::instance().getGroupMembers(groupId);
+
+            int count = memberList.size();
+            int bodyLen = sizeof(int) + sizeof(int) + count * sizeof(GroupMemberInfo);
+
+            QByteArray respBody;
+            respBody.resize(bodyLen);
+            char *ptr = respBody.data();
+
+            memcpy(ptr, &groupId, sizeof(int));
+            ptr += sizeof(int);
+            memcpy(ptr, &count, sizeof(int));
+            ptr += sizeof(int);
+
+            for (const auto &info : memberList) {
+                memcpy(ptr, &info, sizeof(GroupMemberInfo));
+                ptr += sizeof(GroupMemberInfo);
+            }
+
+            this->write(makePacket(MSG_GROUP_MEMBER_LIST_RESP, respBody));
+            break;
+        }
+        case MSG_INVITE_TO_GROUP_REQ: {
+            // 邀请用户加入群(不用通过好友同意直接在群)
+            InviteToGroupReq *req = (InviteToGroupReq*)bodyData.data();
+            int groupId = req->groupId;
+            int targetUserId = req->targetUserId;
+
+            bool success = DBManager::instance().addGroupMember(groupId, targetUserId, 0);
+
+            if (success) {
+                // 通知被邀请的用户
+                ClientSocket* targetSocket = TcpServer::instance().getUserSocket(targetUserId);
+                if (targetSocket) {
+                    InviteToGroupNotify notify;
+                    notify.groupId = groupId;
+                    notify.inviterId = this->m_uid;
+
+                    // 获取群名
+                    QList<GroupInfo> groups = DBManager::instance().getGroupList(targetUserId);
+                    for (const auto& g : groups) {
+                        if (g.groupId == groupId) {
+                            strncpy(notify.groupName, g.groupName, 63);
+                            break;
+                        }
+                    }
+                    strncpy(notify.inviterName, this->m_userName.toUtf8().constData(), 31);
+
+                    targetSocket->write(makePacket(MSG_INVITE_TO_GROUP_NOTIFY,
+                        QByteArray((char*)&notify, sizeof(InviteToGroupNotify)), 0, targetUserId));
+                }
+            }else{
+                // TODO 离线群邀请通知
+            }
+            break;
+        }
+        case MSG_LEAVE_GROUP_REQ: {
+            // 退出群聊
+            LeaveGroupReq *req = (LeaveGroupReq*)bodyData.data();
+            DBManager::instance().removeGroupMember(req->groupId, this->m_uid);
+            break;
+        }
+        case MSG_GROUP_CHAT_TEXT: {
+            // 群聊消息
+            if (bodyData.size() < (int)sizeof(GroupChatMessage)) break;
+
+            GroupChatMessage *msgHeader = (GroupChatMessage*)bodyData.data();
+            int groupId = msgHeader->groupId;
+
+            // 获取消息内容（去掉GroupChatMessage头部）
+            QByteArray msgContent = bodyData.mid(sizeof(GroupChatMessage));
+
+            // 保存到群聊消息表
+            DBManager::instance().saveGroupMessage(groupId, this->m_uid, msgContent);
+
+            // 获取群成员列表
+            QList<int> memberIds = DBManager::instance().getGroupMemberIds(groupId);
+
+            // 构建转发消息体（包含发送者信息）
+            GroupChatMessage forwardHeader;
+            forwardHeader.groupId = groupId;
+            forwardHeader.senderId = this->m_uid;
+            strncpy(forwardHeader.senderName, this->m_userName.toUtf8().constData(), 31);
+            forwardHeader.senderName[31] = '\0';
+
+            QByteArray forwardBody;
+            forwardBody.append((char*)&forwardHeader, sizeof(GroupChatMessage));
+            forwardBody.append(msgContent);
+
+            // 遍历群成员转发消息
+            for (int memberId : memberIds) {
+                if (memberId == this->m_uid) continue; // 不发给自己
+
+                ClientSocket* memberSocket = TcpServer::instance().getUserSocket(memberId);
+                if (memberSocket) {
+                    // 在线：直接转发
+                    memberSocket->write(makePacket(MSG_GROUP_CHAT_TEXT, forwardBody, this->m_uid, memberId));
+                } else {
+                    // 离线：保存离线消息
+                    DBManager::instance().saveGroupOfflineMessage(groupId, this->m_uid, memberId, msgContent);
+                }
+            }
+            break;
+        }
+        case MSG_GROUP_CHAT_HISTORY_REQ: {
+            // 群聊历史消息请求
+            if (bodyData.size() < 4) break;
+            int groupId = *(int*)bodyData.constData();
+
+            auto history = DBManager::instance().getGroupChatHistory(groupId, 200);
+
+            QByteArray resp;
+            QDataStream out(&resp, QIODevice::WriteOnly);
+            out.setByteOrder(QDataStream::LittleEndian);
+
+            out << quint32(groupId);
+            out << quint32(history.size());
+
+            for (const auto &item : history) {
+                int senderId = std::get<0>(item);
+                QString senderName = std::get<1>(item);
+                QByteArray content = std::get<2>(item);
+
+                out << quint32(senderId);
+                QByteArray nameBytes = senderName.toUtf8();
+                out << quint32(nameBytes.size());
+                out.writeRawData(nameBytes.constData(), nameBytes.size());
+                out << quint32(content.size());
+                out.writeRawData(content.constData(), content.size());
+            }
+
+            this->write(makePacket(MSG_GROUP_CHAT_HISTORY_RESP, resp, groupId, this->m_uid));
+            break;
+        }
         default:
             break;
         }
@@ -369,3 +546,27 @@ void ClientSocket::pushFriendRequests(const QList<QPair<int, QString> > &pending
         this->write(makePacket(MSG_ADD_FRIEND_NOTIFY,QByteArray((char*)&notify, sizeof(AddFriendNotify)), 0, this->m_uid));
     }
 }
+
+void ClientSocket::pushGroupOfflineMsgs(const QList<std::tuple<int, int, QString, QByteArray>>& offlineMsgs)
+{
+    for (const auto &msg : offlineMsgs) {
+        int groupId = std::get<0>(msg);
+        int senderId = std::get<1>(msg);
+        QString senderName = std::get<2>(msg);
+        QByteArray content = std::get<3>(msg);
+
+        // 构建群聊消息体
+        GroupChatMessage header;
+        header.groupId = groupId;
+        header.senderId = senderId;
+        strncpy(header.senderName, senderName.toUtf8().constData(), 31);
+        header.senderName[31] = '\0';
+
+        QByteArray body;
+        body.append((char*)&header, sizeof(GroupChatMessage));
+        body.append(content);
+
+        this->write(makePacket(MSG_GROUP_CHAT_TEXT, body, senderId, this->m_uid));
+    }
+}
+

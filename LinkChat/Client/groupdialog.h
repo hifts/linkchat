@@ -32,6 +32,7 @@ protected:
 
 private slots:
     void updateSelectionCount();
+    void onSearchTextChanged(const QString &text);
 
     void on_btnCancel_clicked();
 

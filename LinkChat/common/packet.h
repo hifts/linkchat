@@ -210,6 +210,23 @@ struct LeaveGroupReq {
     int groupId;            // 群ID
 };
 
+// 群聊消息结构（包含发送者信息，用于群聊显示发送者用户名）
+struct GroupChatMessage {
+    int groupId;            // 群ID
+    int senderId;           // 发送者ID
+    char senderName[32];    // 发送者用户名
+    // 后面跟实际的消息内容 (subType + content)
+};
+
+// 群聊历史消息条目结构
+struct GroupChatHistoryItem {
+    int senderId;           // 发送者ID
+    char senderName[32];    // 发送者用户名
+    int contentLen;         // 内容长度
+    // 后面跟实际的消息内容
+};
+
 QByteArray makePacket(uint32_t type, const QByteArray& body, uint32_t src = 0, uint32_t dest = 0);
 
 #endif // PACKET_H
+

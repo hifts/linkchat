@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QSqlDatabase>
+#include <tuple>
 #include "packet.h"
 
 class DBManager : public QObject
@@ -56,6 +57,43 @@ public:
 
     // 获取并清除离线消息
     QList<QPair<int, QByteArray>> getAndClearOfflineMessages(int receiverId);
+
+    // 创建群聊，返回群ID（失败返回-1）
+    int createGroup(const QString &groupName, int creatorId);
+
+    // 获取用户加入的群列表
+    QList<GroupInfo> getGroupList(int userId);
+
+    // 获取群成员列表
+    QList<GroupMemberInfo> getGroupMembers(int groupId);
+
+    // 添加群成员
+    bool addGroupMember(int groupId, int userId, int role = 0);
+
+    // 移除群成员
+    bool removeGroupMember(int groupId, int userId);
+
+    // 获取群内所有成员ID
+    QList<int> getGroupMemberIds(int groupId);
+
+    // 保存群聊消息
+    void saveGroupMessage(int groupId, int senderId, const QByteArray &content);
+
+    // 获取群聊历史消息（返回：senderId, senderName, content）
+    QList<std::tuple<int, QString, QByteArray>> getGroupChatHistory(int groupId, int limit = 200);
+
+    // 保存群聊离线消息
+    void saveGroupOfflineMessage(int groupId, int senderId, int receiverId, const QByteArray &content);
+
+    // 获取并清除群聊离线消息（返回：groupId, senderId, senderName, content）
+    QList<std::tuple<int, int, QString, QByteArray>> getAndClearGroupOfflineMessages(int receiverId);
+
+    // 根据用户ID查询用户名
+    QString getUserNameById(int userId);
+
+    // 检查用户是否是群成员
+    bool isGroupMember(int groupId, int userId);
+
 private:
     explicit DBManager(QObject *parent = nullptr);
     QSqlDatabase m_db;

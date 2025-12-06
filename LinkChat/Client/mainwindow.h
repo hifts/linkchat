@@ -5,11 +5,11 @@
 #include "chatmodel.h"
 #include "packet.h"
 #include "contactdelegate.h"
-#include "filetransfermanager.h"
 
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QWidget>
+#include <tuple>
 
 namespace Ui {
 class MainWindow;
@@ -23,13 +23,16 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    // 设置当前用户ID和用户名
     void setCurrentUserId(int newCurrentUserId);
+    void setCurrentUserName(const QString &name);
 
 protected:
     // 重写鼠标事件
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private:
 
@@ -54,6 +57,10 @@ private:
     void initUI();
     void initModel();
     void connectSignalsAndSlots();
+    
+    // 事件过滤器，用于处理子控件的鼠标事件
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    
     // 回复好友请求
     void sendFriendResponse(int requesterId, bool accepted);
 
@@ -126,6 +133,13 @@ private slots:
     void onFileReceiveCompleted(const QString &fileId,const QString &savePath);
     void onFileReceiveFailed(const QString &fileId, const QString &error);
 
+    // 处理群聊信号
+    void onGroupListReceived(QList<GroupInfo> list);
+    void onGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body);
+    void onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray>>& history);
+    void onCreateGroupResult(bool success, int groupId);
+    void onInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
+
     void on_btnSend_clicked();
 
     void on_btnContact_clicked();
@@ -164,6 +178,13 @@ private:
 
     // 用于暂存等待对方同意的文件传输
     QMap<QString, QString> m_pendingFileTransfers;
+
+    int m_currentGroupId = 0;               // 当前群聊ID（0表示私聊模式）
+    bool m_isGroupChat = false;             // 当前是否在群聊模式
+    QMap<int, QList<ChatMessage>> m_groupChatHistory;  // 群聊记录
+    QSet<int> m_groupIds;                   // 用户加入的群ID集合
+    QString m_currentUserName;              // 当前用户用户名
+    QList<int> m_pendingGroupMembers;       // 创建群时待邀请的成员列表
 };
 
 #endif // MAINWINDOW_H

@@ -18,6 +18,7 @@ int main(int argc, char *argv[])
         // 登录成功进入主页面
         MainWindow w;
         w.setCurrentUserId(loginDlg.loginUid());
+        w.setCurrentUserName(loginDlg.loginUserName());
         w.show();
 
         return a.exec();

@@ -16,6 +16,7 @@ public:
     ~LoginDialog();
 
     int loginUid() const;
+    QString loginUserName() const;
 
 protected:
     // 重写鼠标事件
@@ -33,8 +34,9 @@ private slots:
 
 private:
     Ui::LoginDialog *ui;
-    int m_loginUid = 0;         // 登录成功时保存
-    QPoint m_dragPosition;      // 记录鼠标按下时的相对位置
+    int m_loginUid = 0;             // 登录成功时保存
+    QString m_loginUserName;        // 登录用户名
+    QPoint m_dragPosition;          // 记录鼠标按下时的相对位置
 };
 
 #endif // LOGINDIALOG_H

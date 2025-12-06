@@ -3,6 +3,7 @@
 
 #include "packet.h"
 #include <QTcpSocket>
+#include <tuple>
 
 class ClientSocket : public QTcpSocket
 {
@@ -34,6 +35,9 @@ private:
 
     // 推送好友请求
     void pushFriendRequests(const QList<QPair<int, QString>> &pendingReqs);
+
+    // 推送群聊离线消息
+    void pushGroupOfflineMsgs(const QList<std::tuple<int, int, QString, QByteArray>>& offlineMsgs);
 };
 
 #endif // CLIENTSOCKET_H
