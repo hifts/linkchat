@@ -6,7 +6,9 @@
 #include <QMutex>
 #include <QObject>
 
-// 接收方接收文件类
+/**
+ * @brief 接收方接收文件管理类
+ */
 
 struct ReceivingFileInfo {
     QString fileId;

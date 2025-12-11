@@ -2,11 +2,21 @@
 #define NETWORKMANAGER_H
 
 #include "packet.h"
-#include "filetransfermanager.h"
+#include "heartbeatmanager.h"
+#include "reconnectmanager.h"
 
 #include <QObject>
 #include <QTcpSocket>
 #include <tuple>
+
+/**
+ * @brief 网络管理器
+ * 职责:
+ * 1. 管理TCP连接
+ * 2. 发送和接收数据包
+ * 3. 协调心跳管理器和重连管理器
+ * 4. 处理粘包和协议解析
+*/
 
 class NetworkManager : public QObject
 {
@@ -17,19 +27,38 @@ public:
     // 连接服务器
     void connectToServer(const QString &ip,uint16_t port);
 
+    // 主动断开连接
+    void disconnectFromServer();
+    // 是否是连接状态
+    bool isConnected() const;
+
     // 发送信息(NetworkManager类帮打包)
     void sendMsg(uint32_t type,const QByteArray &body);
 
     // 直接发送原始数据包 (用于外部已经打包好的情况)
     void sendRow(const QByteArray& packet);
 
+    HeartbeatManager* getHeartbeatManager() { return m_heartbeatManager; }
+    ReconnectManager* getReconnectManager() { return m_reconnectManager; }
+
 private:
     explicit NetworkManager(QObject *parent = nullptr);
 
-    QTcpSocket *m_socket;
-    QByteArray m_buffer; // 同样需要缓冲区处理粘包
+    // 发送心跳包
+    void sendHeartbeat();
 
+    // 处理自动登录
+    void handleAutoLogin(const QString &userName,const QString &password);
 private slots:
+    // 处理与服务器连接成功信号
+    void onConnected();
+
+    // 处理与服务器断开信号
+    void onDisconnected();
+
+    // 处理连接错误信号
+    void onError(QAbstractSocket::SocketError error);
+
     void onReadyRead();
 
 signals:
@@ -84,6 +113,16 @@ signals:
 
     // 邀请入群通知
     void sigInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
+
+    // 网络状态信号
+    void sigConnectionStateChanged(bool connected);
+private:
+    QTcpSocket *m_socket;
+    QByteArray m_buffer;        // 同样需要缓冲区处理粘包
+
+    // 心跳包和重连管理器
+    HeartbeatManager *m_heartbeatManager;
+    ReconnectManager *m_reconnectManager;
 };
 
 #endif // NETWORKMANAGER_H

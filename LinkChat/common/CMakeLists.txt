@@ -13,6 +13,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core)
 add_library(LinkChatCommon STATIC
     packet.h
     packet.cpp
+    logger.h
 )
 
 target_link_libraries(LinkChatCommon PRIVATE Qt5::Core)

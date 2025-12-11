@@ -1,4 +1,5 @@
 #include "networkmanager.h"
+#include "logger.h"
 
 #include <QDataStream>
 
@@ -8,10 +9,76 @@ NetworkManager &NetworkManager::instance()
     return instance;
 }
 
+NetworkManager::NetworkManager(QObject *parent)
+    : QObject{parent}
+{
+    m_socket = new QTcpSocket(this);
+
+    m_heartbeatManager = new HeartbeatManager(this);
+    m_reconnectManager = new ReconnectManager(this);
+
+    // 连接socket信号
+    connect(m_socket,&QTcpSocket::connected,this,&NetworkManager::onConnected);
+    connect(m_socket,&QTcpSocket::disconnected,this,&NetworkManager::onDisconnected);
+    connect(m_socket, &QTcpSocket::errorOccurred, this,&NetworkManager::onError);
+
+    // 关联接收数据信号
+    connect(m_socket,&QTcpSocket::readyRead,this,&NetworkManager::onReadyRead);
+
+    // 连接心跳管理器信号
+    connect(m_heartbeatManager,&HeartbeatManager::needSendHeartbeat,this,&NetworkManager::sendHeartbeat);
+    connect(m_heartbeatManager,&HeartbeatManager::heartbeatTimeout,
+            this,[this](int missedCount){
+                LOG_INFO_FMT("心跳超时,错过 %1 次, 主动断开连接",missedCount);
+                m_socket->abort();
+            });
+
+    // 连接重连管理器信号
+    connect(m_reconnectManager,&ReconnectManager::needReconnect,
+            this,[this](const QString &ip,uint16_t port){
+                LOG_INFO_FMT("执行重连 %1:%2",ip,port);
+                m_socket->abort();
+                m_socket->connectToHost(ip,port);
+            });
+
+    connect(m_reconnectManager,&ReconnectManager::needAutoLogin,this,&NetworkManager::handleAutoLogin);
+}
+
 void NetworkManager::connectToServer(const QString &ip, uint16_t port)
 {
+
+    LOG_INFO(QString("连接服务器 %1:%2").arg(ip).arg(port));
+
+    // 保存服务器信息到重连管理器中
+    m_reconnectManager->setServerInfo(ip,port);
+
+    // 设置状态为连接中
+    m_reconnectManager->setConnectionState(ReconnectManager::Connecting);
+
     m_socket->abort();
     m_socket->connectToHost(ip,port);
+}
+
+void NetworkManager::disconnectFromServer()
+{
+    LOG_INFO("主动断开连接");
+
+    // 停止心跳
+    m_heartbeatManager->stop();
+
+    // 禁用自动重连
+    m_reconnectManager->setAutoConnect(false);
+    m_reconnectManager->stopReconnect();
+
+    // 清除登录信息
+    m_reconnectManager->clearLoginInfo();
+
+    m_socket->disconnectFromHost();
+}
+
+bool NetworkManager::isConnected() const
+{
+    return m_socket->state() == QAbstractSocket::ConnectedState;
 }
 
 void NetworkManager::sendMsg(uint32_t type, const QByteArray &body)
@@ -30,21 +97,71 @@ void NetworkManager::sendRow(const QByteArray &packet)
     if(m_socket->state() == QAbstractSocket::ConnectedState){
         m_socket->write(packet);
     }else{
-        qDebug()<<"[Network] Error: Socket not connected. Cannot send raw data.";
+        LOG_WARN("Socket 未连接，无法发送数据");
     }
 }
 
-NetworkManager::NetworkManager(QObject *parent)
-    : QObject{parent}
+void NetworkManager::sendHeartbeat()
 {
-    m_socket = new QTcpSocket(this);
+    if (!isConnected()) {
+        LOG_WARN("与服务器连接已断开,无法发送心跳");
+        return;
+    }
 
-    connect(m_socket,&QTcpSocket::connected,this,[=](){
-        qDebug()<<"Connect to Server";
-    });
+    HeartbeatPacket hb;
+    hb.timestamp = QDateTime::currentMSecsSinceEpoch();
 
-    // 关联接收数据信号
-    connect(m_socket,&QTcpSocket::readyRead,this,&NetworkManager::onReadyRead);
+    // 发送心跳包
+    sendMsg(MSG_HEARTBEAT_REQ,QByteArray((char*)&hb,sizeof(HeartbeatPacket)));
+    LOG_INFO("发送心跳包");
+}
+
+void NetworkManager::handleAutoLogin(const QString &userName, const QString &password)
+{
+    LOG_INFO_FMT("执行自动登录(用户名:%1)",userName);
+
+    LoginReq req;
+    memset(&req,0,sizeof(LoginReq));
+    strncpy(req.userName,userName.toUtf8().constData(),31);
+    strncpy(req.password,password.toUtf8().constData(),31);
+
+    // 发送登录请求
+    sendMsg(MSG_LOGIN_REQ,QByteArray((char*)&req,sizeof(LoginReq)));
+}
+
+void NetworkManager::onConnected()
+{
+    LOG_INFO("已连接到服务器");
+
+    // 清空缓冲区
+    m_buffer.clear();
+
+    // 跟新重连管理器连接状态(已连接)
+    m_reconnectManager->setConnectionState(ReconnectManager::Connected);
+
+    // 启动心跳
+    m_heartbeatManager->start();
+
+    emit sigConnectionStateChanged(true);
+}
+
+void NetworkManager::onDisconnected()
+{
+    LOG_WARN("与服务器断开连接");
+
+    // 停止心跳
+    m_heartbeatManager->stop();
+
+    m_reconnectManager->setConnectionState(ReconnectManager::Disconnected);
+
+    // 发出连接状态改变信号
+    emit sigConnectionStateChanged(false);
+}
+
+void NetworkManager::onError(QAbstractSocket::SocketError error)
+{
+    Q_UNUSED(error);
+    LOG_ERROR(QString("NetworkManager: 网络错误: %1").arg(m_socket->errorString()));
 }
 
 void NetworkManager::onReadyRead()
@@ -64,6 +181,12 @@ void NetworkManager::onReadyRead()
         uint32_t type = header->msg_type;
 
         switch (type) {
+        case MSG_HEARTBEAT_RESP:{
+            // 收到心跳响应
+            m_heartbeatManager->onHeartbeatReceived();
+            LOG_DEBUG("收到心跳响应");
+            break;
+        }
         case MSG_REGISTER_RESP:{
             LoginResp *resp = (LoginResp*)body.data();
             emit sigRegisterResult(resp->result == 1);
@@ -168,11 +291,14 @@ void NetworkManager::onReadyRead()
         }
         case MSG_FILE_TRANSFER_REQ:{
             FileTransferReq *req = (FileTransferReq*)body.data();
-            qDebug() << "[Network] Received file transfer request:"
-                     << "fileId=" << QString::fromUtf8(req->fileId)
-                     << "fileName=" << QString::fromUtf8(req->fileName)
-                     << "fileSize=" << req->fileSize
-                     << "from=" << header->src_id;
+            QString msg = QString("Received file transfer request:"
+                                  "fileId=%1"
+                                  "fileName=%2"
+                                  "fileSize=%3"
+                                  "from=%4")
+                              .arg(QString::fromUtf8(req->fileId),QString::fromUtf8(req->fileName))
+                              .arg(req->fileSize,header->src_id);
+            LOG_INFO(msg);
             emit sigFileTransferRequest(
                 QString::fromUtf8(req->fileId),
                 QString::fromUtf8(req->fileName),
@@ -183,7 +309,7 @@ void NetworkManager::onReadyRead()
         }
         case MSG_FILE_TRANSFER_RESP:{
             if(body.size() < (int)sizeof(FileTransferResp)){
-                qWarning() << "[Network] Invalid FileTransferResp packet size";
+                LOG_WARN("Invalid FileTransferResp packet size");
                 break;
             }
 
@@ -191,9 +317,7 @@ void NetworkManager::onReadyRead()
             QString fileId = QString::fromUtf8(resp->fileId);
             bool accepted = (resp->accepted == 1);
 
-            qDebug() << "[Network] Received file transfer response:"
-                     << "FileID:" << fileId
-                     << "Accepted:" << accepted;
+            LOG_INFO_FMT("Received file transfer repnese:FileID = %1,Accepted = %2",fileId,accepted);
 
             emit sigFileTransferResponse(fileId,accepted);
             break;
@@ -201,7 +325,7 @@ void NetworkManager::onReadyRead()
         case MSG_FILE_CHUNK:{
             // 解析文件分片
             if (body.size() < (int)sizeof(FileChunk)) {
-                qWarning() << "[Network] Invalid FileChunk packet size";
+                LOG_WARN("Invalid FileChunk packet size");
                 break;
             }
 
@@ -216,8 +340,7 @@ void NetworkManager::onReadyRead()
             // 传来的数据分片大小不够实际大小时
             if(chunkData.size() != chunkSize){
                 if (chunkData.size() != chunkSize) {
-                    qWarning() << "[Network] Chunk data size mismatch. Expected:"
-                               << chunkSize << "Got:" << chunkData.size();
+                    LOG_WARN_FMT("Chunk data size mismatch.Expected:%1,Got:%2",chunkSize,chunkData.size());
                     break;
                 }
             }
@@ -310,7 +433,7 @@ void NetworkManager::onReadyRead()
                 QString::fromUtf8(notify->groupName),
                 notify->inviterId,
                 QString::fromUtf8(notify->inviterName)
-            );
+                );
             break;
         }
         default:

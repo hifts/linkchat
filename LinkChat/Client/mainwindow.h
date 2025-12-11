@@ -140,6 +140,11 @@ private slots:
     void onCreateGroupResult(bool success, int groupId);
     void onInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
 
+    // 处理重连信号
+    void onConnectionStateChanged(bool connected);
+    void onReconnectStateChanged(int attempts, int delayMs);
+    void onMaxAttemptsReached();
+
     void on_btnSend_clicked();
 
     void on_btnContact_clicked();

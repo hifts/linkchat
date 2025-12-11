@@ -8,6 +8,8 @@
 
 enum MessageType{
     MSG_UNDEFINED = 0,              // 未定义消息类型
+    MSG_HEARTBEAT_REQ,              // 心跳请求
+    MSG_HEARTBEAT_RESP,             // 心跳响应
     MSG_REGISTER_REQ,               // 注册请求
     MSG_REGISTER_RESP,              // 注册响应
     MSG_LOGIN_REQ,                  // 登录请求
@@ -64,6 +66,11 @@ enum ChatSubType : char {
     SUB_TEXT  = 0,
     SUB_IMAGE = 1,
     SUB_FILE = 2
+};
+
+// 心跳包结构
+struct HeartbeatPacket {
+    uint64_t timestamp;     // 时间戳
 };
 
 // 登录/注册 请求包

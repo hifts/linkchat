@@ -29,7 +29,7 @@ public:
     QString startSendFile(const QString &fileId,const QString &filePath,int friendId);
 
     // 开始接受文件
-    void startReceiveFile(const QString &fileId,const QString &fileName,qint64 fileSize,int friendId);
+    // void startReceiveFile(const QString &fileId,const QString &fileName,qint64 fileSize,int friendId);
 
     // 取消传输
     void cancelTransfer(const QString &fileId);

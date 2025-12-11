@@ -1,4 +1,5 @@
 #include "filetransfermanager.h"
+#include "logger.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -48,7 +49,7 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
 
     // 文件不存在或者是文件夹则不能传输
     if (!fileInfo.exists() || !fileInfo.isFile()) {
-        qWarning() << "[FileTransferManager] File not found:" << filePath;
+        LOG_WARN_FMT("File not found:%1",filePath);
         return QString();
     }
 
@@ -84,29 +85,29 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
     return fileId;
 }
 
-void FileTransferManager::startReceiveFile(const QString &fileId,
-                                           const QString &fileName,
-                                           qint64 fileSize,
-                                           int friendId)
-{
-    // 创建接收文件的传输信息
-    FileTransferInfo *info = new FileTransferInfo;
-    info->fileId = fileId;
-    info->fileName = fileName;
-    info->fileSize = fileSize;
-    info->friendId = friendId;
-    info->isReceiving = true;
-    info->progress = 0;
-    info->thread = nullptr;         // 接收端不需要线程
+// void FileTransferManager::startReceiveFile(const QString &fileId,
+//                                            const QString &fileName,
+//                                            qint64 fileSize,
+//                                            int friendId)
+// {
+//     // 创建接收文件的传输信息
+//     FileTransferInfo *info = new FileTransferInfo;
+//     info->fileId = fileId;
+//     info->fileName = fileName;
+//     info->fileSize = fileSize;
+//     info->friendId = friendId;
+//     info->isReceiving = true;
+//     info->progress = 0;
+//     info->thread = nullptr;         // 接收端不需要线程
 
-    // 程序同目录
-    QString downloadPath = QCoreApplication::applicationDirPath() + "/ReceivedFiles";
-    QDir().mkpath(downloadPath);
-    info->filePath = downloadPath + "/" + fileName;
+//     // 程序同目录
+//     QString downloadPath = QCoreApplication::applicationDirPath() + "/ReceivedFiles";
+//     QDir().mkpath(downloadPath);
+//     info->filePath = downloadPath + "/" + fileName;
 
-    m_transfers[fileId] = info;
-    emit transferStarted(fileId,fileName);
-}
+//     m_transfers[fileId] = info;
+//     emit transferStarted(fileId,fileName);
+// }
 
 void FileTransferManager::cancelTransfer(const QString &fileId)
 {
@@ -123,7 +124,7 @@ void FileTransferManager::cancelTransfer(const QString &fileId)
 
     m_transfers.remove(fileId);
     delete info;
-    qDebug() << "[FileTransferManager] Canceled:" << fileId;
+    LOG_INFO_FMT("File transfer canceled:%1",fileId);
 }
 
 FileTransferInfo *FileTransferManager::getTransferInfo(const QString &fileId)

@@ -33,6 +33,8 @@ find_package(Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt5 REQUIRED COMPONENTS Core)
 
     add_executable(Client
         ${PROJECT_SOURCES}
@@ -48,6 +50,8 @@ find_package(Qt5 REQUIRED COMPONENTS Core)
         filetransfermanager.h filetransfermanager.cpp
         filereceiver.h filereceiver.cpp
         groupdialog.h groupdialog.cpp groupdialog.ui
+        heartbeatmanager.h heartbeatmanager.cpp
+        reconnectmanager.h reconnectmanager.cpp
 
 
     )
@@ -60,6 +64,8 @@ target_link_libraries(Client PRIVATE
     Qt${QT_VERSION_MAJOR}::Core
     LinkChatCommon              # 连接common里的协议
 )
+target_link_libraries(Client PRIVATE Qt5::Core)
+target_link_libraries(Client PRIVATE Qt5::Core)
 target_link_libraries(Client PRIVATE Qt5::Core)
 target_link_libraries(Client PRIVATE Qt5::Core)
 target_link_libraries(Client PRIVATE Qt5::Core)

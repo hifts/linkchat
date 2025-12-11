@@ -1,4 +1,5 @@
 #include "tcpserver.h"
+#include "logger.h"
 
 
 TcpServer::TcpServer(QObject *parent)
@@ -14,13 +15,13 @@ TcpServer &TcpServer::instance()
 void TcpServer::userLogin(int uid, ClientSocket *socket)
 {
     m_onlineUsers.insert(uid,socket);
-    qDebug()<<"[Online] User ID:"<<uid;
+    LOG_INFO_FMT("[Online] User ID:%1",uid);
 }
 
 void TcpServer::userLogout(int uid)
 {
     m_onlineUsers.remove(uid);
-    qDebug()<<"[Offline] User ID:"<<uid;
+    LOG_INFO_FMT("[Offline] User ID:%1",uid);
 }
 
 bool TcpServer::isOnline(int uid)
@@ -48,11 +49,6 @@ void TcpServer::incomingConnection(qintptr socketDescriptor)
         socket->deleteLater();
         return;
     }
-
-    // connect(socket,&ClientSocket::signalMsgReceived,this,[=](uint32_t msgType, const QByteArray &data){
-    //     qDebug()<<"type:"<<msgType<<"body:"<<data;
-    //     socket->write(makePacket(msgType,"server:"+data));
-    // });
 
     // 处理断开
     connect(socket,&QTcpSocket::disconnected,socket,&ClientSocket::deleteLater);

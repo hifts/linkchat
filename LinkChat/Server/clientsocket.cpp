@@ -1,7 +1,7 @@
 #include "clientsocket.h"
-
 #include "dbmanager.h"
 #include "tcpserver.h"
+#include "logger.h"
 
 #include <QDataStream>
 #include <QTimer>
@@ -44,6 +44,11 @@ void ClientSocket::onReadyRead()
         uint32_t msgType = header->msg_type;
 
         switch (msgType) {
+        case MSG_HEARTBEAT_REQ:{
+            // 心跳包
+            this->write(makePacket(MSG_HEARTBEAT_RESP,QByteArray()));
+            break;
+        }
         case MSG_REGISTER_REQ:{
             // 解包（登录/注册包）
             LoginReq *req = (LoginReq*)bodyData.data();
@@ -147,8 +152,6 @@ void ClientSocket::onReadyRead()
             if(targetSocket != nullptr){
                 this->writePacket(targetSocket,MSG_CHAT_TEXT,bodyData,this->m_uid,targetId);
             }else{
-                // qDebug() << "User" << targetId << "is offline. Saving to DB...";
-
                 // 离线时存储消息到数据库
                 DBManager::instance().saveOfflineMessage(this->m_uid,targetId,bodyData);
             }
@@ -178,7 +181,8 @@ void ClientSocket::onReadyRead()
             SearchReq *req = (SearchReq*)bodyData.data();
             QString keyword = QString::fromUtf8(req->keyword).trimmed();
 
-            qDebug() << "[Search] User" << m_uid << "searching for:" << keyword;
+            QString msg = QString("User %1 searching for: %2").arg(m_uid).arg(keyword);
+            LOG_INFO(msg);
 
             // 查库
             QList<FriendInfo> resultList = DBManager::instance().searchUsers(keyword,m_uid);
@@ -260,7 +264,7 @@ void ClientSocket::onReadyRead()
                 this->writePacket(targetSocket,MSG_FILE_TRANSFER_REQ,bodyData,this->m_uid,targetId);
             }else{
                 // 不在线
-                qDebug() << "[Server] Target user" << targetId << "is offline";
+                LOG_INFO_FMT("Send file failed,target user %1 is offline",targetId);
             }
             break;
         }
@@ -289,13 +293,12 @@ void ClientSocket::onReadyRead()
                 // 每100个分片打印一次日志，避免日志刷屏
                 FileChunk *chunk = (FileChunk*)bodyData.data();
                 if (chunk->chunkIndex % 100 == 0) {
-                    qDebug() << "[Server] Forwarding file chunk" << chunk->chunkIndex
-                             << "from user" << this->m_uid << "to user" << targetId;
+                    QString msg = QString("Forwarding file chunk %1 from user %2").arg(chunk->chunkIndex,targetId);
+                    LOG_INFO(msg);
                 }
             }else{
                 // 目标用户不在线，记录日志
-                qWarning() << "[Server] Target user" << targetId
-                           << "is offline. Cannot forward file chunk.";
+                LOG_INFO_FMT("Target user %1 is offline.Cannot forward file chunk.",targetId);
             }
             break;
         }
@@ -389,7 +392,7 @@ void ClientSocket::onReadyRead()
                     strncpy(notify.inviterName, this->m_userName.toUtf8().constData(), 31);
 
                     targetSocket->write(makePacket(MSG_INVITE_TO_GROUP_NOTIFY,
-                        QByteArray((char*)&notify, sizeof(InviteToGroupNotify)), 0, targetUserId));
+                                                   QByteArray((char*)&notify, sizeof(InviteToGroupNotify)), 0, targetUserId));
                 }
             }else{
                 // TODO 离线群邀请通知
@@ -478,9 +481,6 @@ void ClientSocket::onReadyRead()
             break;
         }
 
-        // 发送业务信号
-        // emit signalMsgReceived(msgType,bodyData);
-
         // 从缓冲区移除已处理的这个包
         m_buffer = m_buffer.right(m_buffer.size() - totalLen);
     }
@@ -496,7 +496,7 @@ void ClientSocket::writePacket(ClientSocket *target, int type, const QByteArray 
         target->write(data);
 
     }else{
-        qDebug() << "[Server] Error: Target socket is invalid or disconnected. Cannot forward message.";
+        LOG_ERROR("Target socket is invalid or disconnected. Cannot forward message.");
     }
 }
 

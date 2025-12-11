@@ -1,4 +1,5 @@
 #include "filetransferthread.h"
+#include "logger.h"
 
 #include <QFile>
 #include <qdebug.h>
@@ -41,7 +42,7 @@ void FileTransferThread::run()
     {
         QMutexLocker locker(&m_mutex);
         if(m_stopped){
-            qDebug() << "[FileTransferThread] Transfer stopped before start";
+            LOG_WARN("Transfer stopped before start");
             return;
         }
     }
@@ -71,7 +72,7 @@ void FileTransferThread::run()
         {
             QMutexLocker locker(&m_mutex);
             if(m_stopped){
-                qDebug() << "[FileTransferThread] Transfer stopped by user";
+                LOG_WARN("Transfer stopped by user");
                 break;
             }
         }

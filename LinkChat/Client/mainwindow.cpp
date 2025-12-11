@@ -4,11 +4,13 @@
 #include "filetransfermanager.h"
 #include "filereceiver.h"
 #include "groupdialog.h"
+#include "logger.h"
 
 #include <QBuffer>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QTimer>
+#include <QButtonGroup>
 
 MainWindow::MainWindow(QWidget *parent)
     : QWidget(parent)
@@ -68,7 +70,7 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
 {
     const QPoint pos = event->pos();
 
-    // 1. 如果正在调整大小 → 直接 resize
+    //  如果正在调整大小 → 直接 resize
     if (event->buttons() & Qt::LeftButton && m_resizeDir != None) {
         QRect geom = geometry();
         QPoint delta = event->globalPos() - m_lastPos;
@@ -213,26 +215,39 @@ MainWindow::ResizeDirection MainWindow::getResizeDirection(const QPoint &pos)
 
 void MainWindow::initUI()
 {
-    ui->stackedWidget->setCurrentIndex(0);
-
-    // 1. 无边框 + 拖拽逻辑
+    // 无边框 + 拖拽
     setWindowFlags(Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
+
+    ui->stackedWidget->setCurrentIndex(0);
+
+    // 创建按钮组实现互斥选中效果
+    QButtonGroup *navButtonGroup = new QButtonGroup(this);
+    navButtonGroup->setExclusive(true);  // 设置互斥，同一时间只能选中一个
+    navButtonGroup->addButton(ui->btnAvatar);
+    navButtonGroup->addButton(ui->btnChat);
+    navButtonGroup->addButton(ui->btnContact);
+    navButtonGroup->addButton(ui->btnNewFriends);
+
+    // 默认选中"好友"按钮
+    ui->btnContact->setChecked(true);
+
+
 
     // 在 MainWindow 构造函数里，initUI() 之后加上这句：
     ui->chatList->setMouseTracking(true);
     ui->chatList->viewport()->setAttribute(Qt::WA_Hover);
 
-    // 2. 现代深色 UI 样式
+    // UI 样式
     QString style = R"(
-    /* 1. 全局设置：字体与去边框 */
+    /* 全局设置：字体与去边框 */
     QWidget {
         font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
         font-size: 14px;
-        border: none; /* 暴力去除所有默认边框，解决白线问题 */
+        border: none;
     }
 
-    /* 2. 左侧侧边栏：最深色 (#202225) */
+    /* 左侧侧边栏：最深色 (#202225) */
     QWidget#sideBar {
         background-color: #202225;
         border: none; /* 确保自身无边框 */
@@ -243,12 +258,12 @@ void MainWindow::initUI()
         background-color: transparent;
         color: #b9bbbe;       /* 浅灰色文字 */
         border: none;         /* 去掉按钮边框 */
-        outline: none;        /* 【关键】去掉选中时的那个丑陋虚线框！ */
+        outline: none;
         border-radius: 10px;
         padding: 10px 5px;    /* 上下10px，左右缩减为5px，给文字留空 */
         margin: 5px 8px;      /* 按钮左右留点空隙，不要贴边 */
         font-weight: bold;
-        font-size: 10px;      /* 【关键】字体改小，不然放不下 */
+        font-size: 10px;
         text-align: left;     /* 文字靠左，这样图标和文字会排得整齐 */
     }
 
@@ -274,7 +289,7 @@ void MainWindow::initUI()
         padding: 0px;          /* 头像不需要内边距 */
     }
 
-    /* 3. 中间列表区：中灰色 (#2f3136) */
+    /* 中间列表区：中灰色 (#2f3136) */
     QWidget#listArea{
         background-color: #2f3136;
     }
@@ -353,7 +368,7 @@ void MainWindow::initUI()
         color: #ffffff;
     }
 
-    /* 4. 右侧聊天区：最亮色 (#36393f) */
+    /* 右侧聊天区：最亮色 (#36393f) */
     QWidget#chatArea {
         background-color: #36393f;
     }
@@ -373,13 +388,97 @@ void MainWindow::initUI()
         padding: 10px;
     }
 
-    /* 【修复】底部输入容器 */
+    /* 好友列表滚动条 */
+    QListWidget#contactList QScrollBar:vertical {
+        background-color: transparent;
+        width: 8px;
+        margin: 4px 2px 4px 0px;
+        border-radius: 4px;
+    }
+    QListWidget#contactList QScrollBar::handle:vertical {
+        background-color: #202225;
+        min-height: 30px;
+        border-radius: 4px;
+    }
+    QListWidget#contactList QScrollBar::handle:vertical:hover {
+        background-color: #4f545c;
+    }
+    QListWidget#contactList QScrollBar::handle:vertical:pressed {
+        background-color: #5865F2;
+    }
+    QListWidget#contactList QScrollBar::add-line:vertical,
+    QListWidget#contactList QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QListWidget#contactList QScrollBar::add-page:vertical,
+    QListWidget#contactList QScrollBar::sub-page:vertical {
+        background: none;
+    }
+
+    /* 聊天消息列表滚动条 */
+    QListView#chatList QScrollBar:vertical {
+        background-color: transparent;
+        width: 8px;
+        margin: 4px 2px 4px 0px;
+        border-radius: 4px;
+    }
+    QListView#chatList QScrollBar::handle:vertical {
+        background-color: #202225;
+        min-height: 30px;
+        border-radius: 4px;
+    }
+    QListView#chatList QScrollBar::handle:vertical:hover {
+        background-color: #4f545c;
+    }
+    QListView#chatList QScrollBar::handle:vertical:pressed {
+        background-color: #5865F2;
+    }
+    QListView#chatList QScrollBar::add-line:vertical,
+    QListView#chatList QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QListView#chatList QScrollBar::add-page:vertical,
+    QListView#chatList QScrollBar::sub-page:vertical {
+        background: none;
+    }
+
+    /* 新朋友列表滚动条 */
+    QListWidget#friendRequestsList QScrollBar:vertical {
+        background-color: transparent;
+        width: 8px;
+        margin: 4px 2px 4px 0px;
+        border-radius: 4px;
+    }
+    QListWidget#friendRequestsList QScrollBar::handle:vertical {
+        background-color: #202225;
+        min-height: 30px;
+        border-radius: 4px;
+    }
+    QListWidget#friendRequestsList QScrollBar::handle:vertical:hover {
+        background-color: #4f545c;
+    }
+    QListWidget#friendRequestsList QScrollBar::handle:vertical:pressed {
+        background-color: #5865F2;
+    }
+    QListWidget#friendRequestsList QScrollBar::add-line:vertical,
+    QListWidget#friendRequestsList QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QListWidget#friendRequestsList QScrollBar::add-page:vertical,
+    QListWidget#friendRequestsList QScrollBar::sub-page:vertical {
+        background: none;
+    }
+
+    /* 底部输入容器 */
     QWidget#inputWidget {
         background-color: #36393f; /* 与背景同色 */
         padding: 10px;
     }
 
-    /* 【修复】输入框 QTextEdit */
+    /* 输入框 QTextEdit */
     QTextEdit#msgEdit {
         background-color: #40444b; /* 输入框背景深灰 */
         color: white;
@@ -389,7 +488,7 @@ void MainWindow::initUI()
         font-size: 14px;
     }
 
-    /* 【修复】发送按钮 */
+    /* 发送按钮 */
     QPushButton#btnSend {
         background-color: #5865F2; /* 品牌蓝 */
         color: white;
@@ -496,7 +595,7 @@ void MainWindow::connectSignalsAndSlots()
     connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,this,&MainWindow::onFileReceiveCompleted);
     connect(&FileReceiver::instance(),&FileReceiver::receiveFailed,this,&MainWindow::onFileReceiveFailed);
 
-    // ============ 群聊相关信号 ============
+    // 关联群聊信号
     connect(&NetworkManager::instance(), &NetworkManager::sigGroupListReceived, this, &MainWindow::onGroupListReceived);
     connect(&NetworkManager::instance(), &NetworkManager::sigGroupMsgReceived, this, &MainWindow::onGroupMsgReceived);
     connect(&NetworkManager::instance(), &NetworkManager::sigGroupChatHistoryReceived, this, &MainWindow::onGroupChatHistoryReceived);
@@ -681,7 +780,7 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
         } else {
             // 否则应该显示红点提示
             m_chatHistory[srcId].append(msg);
-            // 2. 【核心】找到好友列表里对应的 Item，增加未读计数
+            // 找到好友列表里对应的 Item，增加未读计数
             for (int i = 0; i < ui->contactList->count(); ++i) {
                 QListWidgetItem *item = ui->contactList->item(i);
                 int uid = item->data(Qt::UserRole).toInt();
@@ -738,10 +837,10 @@ void MainWindow::onSigChatHistoryReceived(int friendId, const QList<QPair<int, Q
         QByteArray rawBody = p.second;
         if (rawBody.isEmpty()) continue;
 
-        // 1. 获取协议头 (第一个字节)
+        // 获取协议头 (第一个字节)
         char msgType = rawBody[0];
 
-        // 2. 获取实际内容 (去掉第一个字节)
+        // 获取实际内容 (去掉第一个字节)
         QByteArray realContent = rawBody.mid(1);
 
         if (msgType == SUB_IMAGE) {
@@ -767,7 +866,6 @@ void MainWindow::onSigFriendStatusChanged(int uid, int status)
     for (int i = 0; i < ui->contactList->count(); ++i) {
         QListWidgetItem* item = ui->contactList->item(i);
 
-        // 我们之前把 UID 存在 UserRole 里了，现在取出来对比
         int itemUid = item->data(Qt::UserRole).toInt();
 
         if (itemUid == uid) {
@@ -870,29 +968,28 @@ void MainWindow::updateNewFriendsPage()
     ui->friendRequestsList->setSelectionMode(QAbstractItemView::NoSelection);
 
     for (const auto &req : m_pendingRequests) {
-        // 1. 创建 ListWidgetItem
+        // 创建 ListWidgetItem
         QListWidgetItem *item = new QListWidgetItem(ui->friendRequestsList);
-        // 设置合适的高度，60-70px 通常比较美观
+
         item->setSizeHint(QSize(0, 70));
-        // 注意：不要在这里 item->setText()，因为会被 setItemWidget 挡住
         item->setData(Qt::UserRole, req.requesterId);
 
-        // 2. 创建容器 Widget
+        // 创建容器 Widget
         QWidget *widget = new QWidget;
         // 设置背景透明，否则可能会有奇怪的灰色背景块
         widget->setStyleSheet("background-color: transparent;");
 
-        // 3. 创建水平布局
+        // 创建水平布局
         QHBoxLayout *layout = new QHBoxLayout(widget);
-        // 【关键】设置边距，防止内容被裁剪。参数：左，上，右，下
+        // 设置边距，防止内容被裁剪。参数：左，上，右，下
         layout->setContentsMargins(15, 5, 15, 5);
         layout->setSpacing(10); // 控件之间的间距
 
-        // 4. 创建名字 Label (替代原来的 item->setText)
+        // 创建名字 Label (替代原来的 item->setText)
         QLabel *nameLabel = new QLabel(req.requesterName);
         nameLabel->setStyleSheet("color: #dcddde; font-size: 12px; font-weight: bold;");
 
-        // 5. 创建按钮
+        // 创建按钮
         QPushButton *accept = new QPushButton("同意");
         QPushButton *reject = new QPushButton("拒绝");
 
@@ -900,7 +997,7 @@ void MainWindow::updateNewFriendsPage()
         accept->setFixedSize(40, 25);
         reject->setFixedSize(40, 25);
 
-        // 设置按钮样式 (保持你原来的风格，微调对齐)
+        // 设置按钮样式
         accept->setStyleSheet(
             "QPushButton { background: #07c160; color: white; border-radius: 4px; border: none; font-size: 10px; }"
             "QPushButton:hover { background: #06ad56; }"
@@ -923,9 +1020,9 @@ void MainWindow::updateNewFriendsPage()
             removeRequestAndRefresh(req.requesterId);
         });
 
-        // 7. 添加到布局： 名字 -> 弹簧 -> 同意 -> 拒绝
+        //  添加到布局： 名字 -> 弹簧 -> 同意 -> 拒绝
         layout->addWidget(nameLabel);
-        layout->addStretch(); // 弹簧，把按钮顶到最右边
+        layout->addStretch();
         layout->addWidget(accept);
         layout->addWidget(reject);
 
@@ -985,7 +1082,7 @@ void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
             FileTransferManager::instance().startSendFile(fileId,filePath,m_currentFriendId);
             // QMessageBox::information(this, "成功", "对方已接受文件传输,开始发送...");
         }else{
-            qWarning() << "[UI] File path not found for fileId:" << fileId;
+            LOG_WARN_FMT("File path not found for fileId:%1",fileId);
         }
     } else {
         // 对方拒绝接收文件
@@ -1018,7 +1115,7 @@ void MainWindow::onFileTransferCompleted(const QString &fileId)
     Q_UNUSED(fileId)
 
     QMessageBox::information(this, "文件传输", "文件传输完成！");
-    qDebug() << "[UI] File transfer completed:" << fileId;
+    LOG_INFO_FMT("File transfer completed:%1",fileId);
 }
 
 void MainWindow::onFileTransferFailed(const QString &fileId, const QString &error)
@@ -1026,7 +1123,7 @@ void MainWindow::onFileTransferFailed(const QString &fileId, const QString &erro
     Q_UNUSED(fileId)
 
     QMessageBox::warning(this, "传输失败", "文件传输失败: " + error);
-    qDebug() << "[UI] File transfer failed:" << fileId << error;
+    LOG_ERROR_FMT("File %1 transfer failed,%2",fileId,error);
 }
 
 void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk, int chunkIndex, int totalChunks, int friendId)
@@ -1048,8 +1145,7 @@ void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk,
     NetworkManager::instance().sendRow(packet);
 
     if (chunkIndex % 10 == 0) {  // 每10个分片打印一次日志
-        qDebug() << "[Network] Sent chunk" << chunkIndex << "/" << totalChunks
-                 << "for file" << fileId;
+        LOG_INFO_FMT("Send chunk %1 / %2 for file",chunkIndex,totalChunks);
     }
 }
 
@@ -1069,12 +1165,13 @@ void MainWindow::onFileReceiveCompleted(const QString &fileId, const QString &sa
 {
     QMessageBox::information(this, "文件接收完成",
                              QString("文件已保存到:\n%1").arg(savePath));
-    qDebug() << "[UI] File receive completed:" << savePath;
+    LOG_INFO_FMT("File receive completed:%1",savePath);
 }
 
 void MainWindow::onFileReceiveFailed(const QString &fileId, const QString &error)
 {
     QMessageBox::warning(this, "接收失败", "文件接收失败: " + error);
+    LOG_ERROR_FMT("File %1 received failed,%2",fileId,error);
 }
 
 void MainWindow::onGroupListReceived(QList<GroupInfo> list)
@@ -1214,6 +1311,33 @@ void MainWindow::onInviteToGroupNotify(int groupId, const QString &groupName, in
 
     // 刷新群列表
     NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
+}
+
+void MainWindow::onConnectionStateChanged(bool connected)
+{
+    if(connected){
+        LOG_INFO("网络状态已恢复");
+
+        // 延迟请求好友列表和群列表
+        QTimer::singleShot(500,[](){
+            NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ,QByteArray());
+            NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ,QByteArray());
+        });
+    }else{
+        LOG_WARN("网络已断开");
+    }
+}
+
+void MainWindow::onReconnectStateChanged(int attempts, int delayMs)
+{
+    QString msg = QString("正在尝试重新连接...(第%1次，等待%2秒)").arg(attempts,delayMs);
+    LOG_INFO(msg);
+}
+
+void MainWindow::onMaxAttemptsReached()
+{
+    LOG_INFO("已达到最大重连次数");
+    QMessageBox::warning(this,"连接失败","无法连接，请检查网络后重试",QMessageBox::Ok);
 }
 
 void MainWindow::on_btnSend_clicked()

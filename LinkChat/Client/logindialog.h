@@ -18,6 +18,8 @@ public:
     int loginUid() const;
     QString loginUserName() const;
 
+    QString loginPassword() const;
+
 protected:
     // 重写鼠标事件
     void mousePressEvent(QMouseEvent *event) override;
@@ -36,6 +38,7 @@ private:
     Ui::LoginDialog *ui;
     int m_loginUid = 0;             // 登录成功时保存
     QString m_loginUserName;        // 登录用户名
+    QString m_loginPassword;
     QPoint m_dragPosition;          // 记录鼠标按下时的相对位置
 };
 

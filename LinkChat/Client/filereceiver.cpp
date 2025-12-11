@@ -1,4 +1,5 @@
 #include "filereceiver.h"
+#include "logger.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -48,7 +49,7 @@ bool FileReceiver::startReceiving(const QString &fileId, const QString &fileName
     // 创建文件
     QFile *file = new QFile(savePath);
     if(!file->open(QIODevice::WriteOnly)){
-        qCritical() << "[FileReceiver] Failed to create file:" << savePath;
+        LOG_ERROR_FMT("Failed to create file:%1",savePath);
         delete file;
         emit receiveFailed(fileId, "无法创建文件");
         return false;
@@ -76,7 +77,7 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
 
     // 检查任务是否存在(不存在则不能接收数据)
     if (!m_receivingFiles.contains(fileId)) {
-        qWarning() << "[FileReceiver] File not found:" << fileId;
+        LOG_ERROR_FMT("File not found:%1,cannot received file",fileId);
         return false;
     }
 
@@ -84,14 +85,14 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
 
     // 检查分片是否已经接收
     if(info->receivedChunkMap.contains(chunkIndex)){
-        qDebug() << "[FileReceiver] Chunk already received:" << chunkIndex;
+        LOG_WARN_FMT("Chunk already received:%1",chunkIndex);
         return true; // 重复分片，直接忽略
     }
 
     // 写入文件
     quint64 offset = static_cast<quint64>(chunkIndex) * 64 * 1024;
     if(!info->file->seek(offset)){
-        qCritical() << "[FileReceiver] Failed to write chunk:" << chunkIndex;
+        LOG_ERROR_FMT("Failed to write chunk:%1",chunkIndex);
         emit receiveFailed(fileId,"文件定位失败");
         cancelReceiving(fileId);
         return false;
@@ -100,7 +101,7 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
     quint64 written = info->file->write(data);
     if(written != data.size()){
         // 写入字节数不等于实际字节数时
-        qCritical() << "[FileReceiver] Failed to write chunk:" << chunkIndex;
+        LOG_ERROR_FMT("Failed to write chunk:%1",chunkIndex);
         emit receiveFailed(fileId, "写入文件失败");
         cancelReceiving(fileId);
         return false;
@@ -116,8 +117,7 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
 
     // 每接收10个分片打印一次日志
     if (chunkIndex % 10 == 0) {
-        qDebug() << "[FileReceiver] Received chunk" << chunkIndex
-                 << "/" << info->totalChunks << "(" << percent << "%)";
+        LOG_INFO(QString("Received chunk %1 / %2 (%3%)").arg(chunkIndex,info->totalChunks).arg(percent));
     }
 
     emit receiveProgress(fileId,percent,info->receivedSize,info->totalSize);
@@ -128,7 +128,7 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
         info->file->close();
 
         QString savePath = info->savePath;
-        qDebug() << "[FileReceiver] File receive completed:" << savePath;
+        LOG_INFO_FMT("File received completed:%1",savePath);
 
         emit receiveCompleted(fileId,savePath);
 
