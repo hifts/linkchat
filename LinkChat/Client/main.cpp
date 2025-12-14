@@ -22,8 +22,8 @@ int main(int argc, char *argv[])
     ReconnectManager *reconnectMgr = netMgr.getReconnectManager();
 
     // 配置心跳参数
-    heartbeatMgr->setHeartbeatInterval(30000);      // 30秒发送一次心跳
-    heartbeatMgr->setHeartbeatTimeout(90000);       // 90秒未响应视为超时
+    heartbeatMgr->setHeartbeatInterval(5000);       // 5秒发送一次心跳
+    heartbeatMgr->setHeartbeatTimeout(15000);       // 15秒未响应视为超时
     heartbeatMgr->setMaxMissedHeartbeats(3);
 
     // 配置重连参数

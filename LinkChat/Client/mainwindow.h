@@ -5,6 +5,8 @@
 #include "chatmodel.h"
 #include "packet.h"
 #include "contactdelegate.h"
+#include "transferstatemanager.h"
+#include "reconnecttransfermanager.h"
 
 #include <QListWidget>
 #include <QMouseEvent>
@@ -67,6 +69,12 @@ private:
     // 删除好友请求
     void removeRequestAndRefresh(int requesterId);
 
+    // 发送文件传输请求（用于断点续传恢复）
+    void sendFileTransferRequestForResume(const QString &fileId, const TransferState &state,int friendId);
+
+    // 检查未完成的传输任务
+    void checkIncompleteTransfers();
+
 private slots:
     // 处理收到的好友列表信号
     void onFriendListReceived(QList<FriendInfo> list);
@@ -124,6 +132,9 @@ private slots:
     // 处理文件传输失败
     void onFileTransferFailed(const QString &fileId, const QString &error);
 
+    // 处理文件传输暂停
+    void onFileTransferPaused(const QString &fileId, int lastChunkIndex);
+
     // 处理发送分片
     void onSendFileChunk(const QString &fileId, const QByteArray &chunk, int chunkIndex, int totalChunks, int friendId);
 
@@ -144,6 +155,14 @@ private slots:
     void onConnectionStateChanged(bool connected);
     void onReconnectStateChanged(int attempts, int delayMs);
     void onMaxAttemptsReached();
+
+    // 处理断线重连传输相关信号
+    void onReadyToResumeTransfers(const QList<PendingTransferResume> &transfers);
+    void onRequestResumeTransfer(const QString &fileId, int friendId,bool isSending);
+
+    // 处理断点续传协议信号
+    void onFileResumeReq(const QString &fileId, int senderId);
+    void onFileResumeResp(const QString &fileId, bool canResume, int totalChunks, int receivedChunks, const QByteArray &bitmap);
 
     void on_btnSend_clicked();
 

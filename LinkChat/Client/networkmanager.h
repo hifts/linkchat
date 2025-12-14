@@ -116,6 +116,19 @@ signals:
 
     // 网络状态信号
     void sigConnectionStateChanged(bool connected);
+
+    // 断点续传信号
+    void sigFileResumeResp(const QString &fileId, bool canResume, int totalChunks, int receivedChunks, const QByteArray &bitmap);
+    void sigFileResumeReq(const QString &fileId, int senderId);
+    void sigFileVerifyResp(const QString &fileId, bool verified);
+
+public:
+    // 发送恢复传输请求
+    void requestResumeTransfer(const QString &fileId, int friendId);
+
+    // 发送文件校验请求
+    void requestFileVerify(const QString &fileId, const QString &fileMD5, int friendId);
+
 private:
     QTcpSocket *m_socket;
     QByteArray m_buffer;        // 同样需要缓冲区处理粘包

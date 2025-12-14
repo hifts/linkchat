@@ -101,6 +101,33 @@ void NetworkManager::sendRow(const QByteArray &packet)
     }
 }
 
+void NetworkManager::requestResumeTransfer(const QString &fileId, int friendId)
+{
+    FileResumeReq req;
+    memset(&req, 0, sizeof(req));
+    strncpy(req.fileId, fileId.toUtf8().constData(), 63);
+
+    QByteArray body((char*)&req, sizeof(req));
+    QByteArray packet = makePacket(MSG_FILE_RESUME_REQ, body, 0, friendId);
+    sendRow(packet);
+
+    LOG_INFO_FMT("Sent file resume request: %1 to %2", fileId, friendId);
+}
+
+void NetworkManager::requestFileVerify(const QString &fileId, const QString &fileMD5, int friendId)
+{
+    FileVerifyReq req;
+    memset(&req, 0, sizeof(req));
+    strncpy(req.fileId, fileId.toUtf8().constData(), 63);
+    strncpy(req.fileMD5, fileMD5.toUtf8().constData(), 32);
+
+    QByteArray body((char*)&req, sizeof(req));
+    QByteArray packet = makePacket(MSG_FILE_VERIFY_REQ, body, 0, friendId);
+    sendRow(packet);
+
+    LOG_INFO_FMT("Sent file verify request: %1", fileId);
+}
+
 void NetworkManager::sendHeartbeat()
 {
     if (!isConnected()) {
@@ -162,6 +189,8 @@ void NetworkManager::onError(QAbstractSocket::SocketError error)
 {
     Q_UNUSED(error);
     LOG_ERROR(QString("NetworkManager: 网络错误: %1").arg(m_socket->errorString()));
+    m_reconnectManager->setConnectionState(ReconnectManager::Disconnected);
+    
 }
 
 void NetworkManager::onReadyRead()
@@ -434,6 +463,69 @@ void NetworkManager::onReadyRead()
                 notify->inviterId,
                 QString::fromUtf8(notify->inviterName)
                 );
+            break;
+        }
+        case MSG_FILE_RESUME_REQ: {
+            // 收到恢复传输请求（作为接收方）
+            if(body.size() < (int)sizeof(FileResumeReq)){
+                LOG_WARN("Invalid FileResumeReq packet size");
+                break;
+            }
+            FileResumeReq *req = (FileResumeReq*)body.data();
+            QString fileId = QString::fromUtf8(req->fileId);
+            LOG_INFO_FMT("Received file resume request: %1 from %2", fileId, header->src_id);
+            emit sigFileResumeReq(fileId, header->src_id);
+            break;
+        }
+        case MSG_FILE_RESUME_RESP: {
+            // 收到恢复传输响应（作为发送方）
+            if(body.size() < (int)sizeof(FileResumeResp)){
+                LOG_WARN("Invalid FileResumeResp packet size");
+                break;
+            }
+            FileResumeResp *resp = (FileResumeResp*)body.data();
+            QString fileId = QString::fromUtf8(resp->fileId);
+            bool canResume = (resp->canResume == 1);
+            int totalChunks = resp->totalChunks;
+            int receivedChunks = resp->receivedChunks;
+
+            // 解析已接收分片位图
+            QByteArray bitmap;
+            if(canResume && totalChunks > 0){
+                int bitmapSize = (totalChunks + 7) / 8;
+                bitmap = body.mid(sizeof(FileResumeResp), bitmapSize);
+            }
+
+            LOG_INFO(QString("Received file resume response: %1, canResume=%2, received=%3/%4")
+                         .arg(fileId).arg(canResume).arg(receivedChunks).arg(totalChunks));
+            emit sigFileResumeResp(fileId, canResume, totalChunks, receivedChunks, bitmap);
+            break;
+        }
+        case MSG_FILE_VERIFY_REQ: {
+            // 收到文件校验请求（作为接收方）
+            if(body.size() < (int)sizeof(FileVerifyReq)){
+                LOG_WARN("Invalid FileVerifyReq packet size");
+                break;
+            }
+            // 文件校验由FileReceiver处理，这里只转发信号
+            FileVerifyReq *req = (FileVerifyReq*)body.data();
+            QString fileId = QString::fromUtf8(req->fileId);
+            QString fileMD5 = QString::fromUtf8(req->fileMD5);
+            LOG_INFO_FMT("Received file verify request: %1, MD5=%2", fileId, fileMD5);
+            // TODO: 实现文件校验逻辑
+            break;
+        }
+        case MSG_FILE_VERIFY_RESP: {
+            // 收到文件校验响应（作为发送方）
+            if(body.size() < (int)sizeof(FileVerifyResp)){
+                LOG_WARN("Invalid FileVerifyResp packet size");
+                break;
+            }
+            FileVerifyResp *resp = (FileVerifyResp*)body.data();
+            QString fileId = QString::fromUtf8(resp->fileId);
+            bool verified = (resp->verified == 1);
+            LOG_INFO_FMT("Received file verify response: %1, verified=%2", fileId, verified);
+            emit sigFileVerifyResp(fileId, verified);
             break;
         }
         default:

@@ -32,7 +32,7 @@ public:
     ConnectionState getConnectState() const{return m_state;}
 
     // 是否正在重连
-    bool isReconnecting() const {return m_state == Connecting;}
+    bool isReconnecting() const {return m_state == Reconnecting;}
 
     // 启动/禁用自动重连
     void setAutoConnect(bool enable);

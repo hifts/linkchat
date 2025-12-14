@@ -26,12 +26,17 @@ enum MessageType{
     MSG_ADD_FRIEND_RESP,            // 处理好友回复（好友同意/拒绝）
     MSG_ADD_FRIEND_RESULT,          // 添加好友响应
     MSG_CHAT_TEXT,                  // 文本聊天
-    // MSG_CHAT_IMAGE,              // 图片
     MSG_FILE_TRANSFER_REQ,          // 文件传输请求
     MSG_FILE_TRANSFER_RESP,         // 文件传输响应
     MSG_FILE_CHUNK,                 // 文件分片数据
     MSG_FILE_TRANSFER_ACK,          // 文件传输确认
     MSG_FILE_TRANSFER_CANCEL,       // 取消文件传输
+
+    // 断点续传协议
+    MSG_FILE_RESUME_REQ,            // 恢复传输请求
+    MSG_FILE_RESUME_RESP,           // 恢复传输响应
+    MSG_FILE_VERIFY_REQ,            // 文件校验请求
+    MSG_FILE_VERIFY_RESP,           // 文件校验响应
 
     // 群聊协议
     MSG_CREATE_GROUP_REQ,           // 创建群聊请求
@@ -156,6 +161,33 @@ struct FileTransferAck {
 struct FileTransferCancel {
     char fileId[64];         // 文件ID
     quint8 reason;           // 取消原因 0=用户取消 1=错误
+};
+
+// 恢复传输请求结构
+struct FileResumeReq {
+    char fileId[64];         // 文件ID
+};
+
+// 恢复传输响应结构
+struct FileResumeResp {
+    char fileId[64];         // 文件ID
+    quint8 canResume;        // 是否可以恢复 1=可以 0=不可以
+    quint32 totalChunks;     // 总分片数
+    quint32 receivedChunks;  // 已接收分片数
+    // 后面跟着已接收分片的位图数据
+    // 位图大小 = (totalChunks + 7) / 8 字节
+};
+
+// 文件校验请求结构
+struct FileVerifyReq {
+    char fileId[64];         // 文件ID
+    char fileMD5[33];        // 文件MD5值
+};
+
+// 文件校验响应结构
+struct FileVerifyResp {
+    char fileId[64];         // 文件ID
+    quint8 verified;         // 校验结果 1=成功 0=失败
 };
 
 // 创建群聊请求结构

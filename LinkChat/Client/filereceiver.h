@@ -13,12 +13,13 @@
 struct ReceivingFileInfo {
     QString fileId;
     QString fileName;
-    QString savePath;
-    qint64 totalSize;
-    qint64 receivedSize;
-    int totalChunks;
-    int receivedChunks;                 // 接收到第几片
-    QFile *file;
+    QString savePath;           // 最终保存路径
+    QString tempPath;           // 临时文件路径
+    qint64 totalSize = 0;
+    qint64 receivedSize = 0;
+    int totalChunks = 0;
+    int receivedChunks = 0;             // 接收到第几片
+    QFile *file = nullptr;
     QMap<int, bool> receivedChunkMap;   // 记录已接收的分片
 };
 
@@ -37,9 +38,20 @@ public:
     // 取消接收文件
     void cancelReceiving(const QString &fileId);
 
+    // 暂停接收文件
+    void pauseReceiving(const QString &fileId);
+
     // 获取接收任务
     ReceivingFileInfo *getReceivingInfo(const QString &fileId);
+
+    // 获取已完成分片的位图（用于断点续传响应）
+    QByteArray getCompletedChunksBitmap(const QString &fileId);
+
+    // 验证文件MD5
+    bool verifyFileMD5(const QString &filePath, const QString &expectedMD5);
 private:
+    // 重命名临时文件为最终文件
+    void renameTempFile(const QString &fileId);
     explicit FileReceiver(QObject *parent = nullptr);
     ~FileReceiver();
 

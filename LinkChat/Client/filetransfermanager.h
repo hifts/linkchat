@@ -2,6 +2,7 @@
 #define FILETRANSFERMANAGER_H
 
 #include "filetransferthread.h"
+#include "transferstatemanager.h"
 
 #include <QObject>
 #include <QMap>
@@ -28,14 +29,20 @@ public:
     // 开始发送文件
     QString startSendFile(const QString &fileId,const QString &filePath,int friendId);
 
-    // 开始接受文件
-    // void startReceiveFile(const QString &fileId,const QString &fileName,qint64 fileSize,int friendId);
+    // 暂停传输
+    void pauseTransfer(const QString &fileId);
+
+    // 恢复传输
+    void resumeTransfer(const QString &fileId);
 
     // 取消传输
     void cancelTransfer(const QString &fileId);
 
     // 获取传输信息
     FileTransferInfo *getTransferInfo(const QString &fileId);
+
+    // 获取所有未完成的传输
+    QList<TransferState> getIncompleteTransfers();
 
     // 文件ID
     QString generateFileId(const QString &filePath);
@@ -45,6 +52,7 @@ signals:
     void transferProgress(const QString &fileId, int percent, qint64 sent, qint64 total);
     void transferCompleted(const QString &fileId);
     void transferFailed(const QString &fileId, const QString &error);
+    void transferPaused(const QString &fileId,int lastChunkIndex);
 
     // 发送分片信号（连接到NetworkManager）
     void sendFileChunk(const QString &fileId, const QByteArray &chunk,
@@ -56,7 +64,7 @@ private slots:
     void onProgressUpdated(int percent, qint64 sent, qint64 total);
     void onTransferCompleted();
     void onTransferFailed(const QString &error);
-
+    void onTransferPaused(int lastChunkIndex);
 private:
     explicit FileTransferManager(QObject *parent = nullptr);
     ~FileTransferManager();

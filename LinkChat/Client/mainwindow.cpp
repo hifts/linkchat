@@ -22,11 +22,25 @@ MainWindow::MainWindow(QWidget *parent)
     
     // 安装事件过滤器到主窗口，用于处理子控件的鼠标事件
     installEventFilter(this);
+    
+    // 给所有子控件安装事件过滤器并启用鼠标追踪
+    QList<QWidget*> allWidgets = findChildren<QWidget*>();
+    for (QWidget *widget : allWidgets) {
+        widget->installEventFilter(this);
+        widget->setMouseTracking(true);
+    }
 
     //初始化界面
     initUI();
 
     initModel();
+    
+    // 在UI初始化后，再次给所有子控件安装事件过滤器并启用鼠标追踪
+    allWidgets = findChildren<QWidget*>();
+    for (QWidget *widget : allWidgets) {
+        widget->installEventFilter(this);
+        widget->setMouseTracking(true);
+    }
 
     m_searchTimer = new QTimer(this);
     m_searchTimer->setInterval(300);        // 隔300ms再触发搜索
@@ -41,6 +55,9 @@ MainWindow::MainWindow(QWidget *parent)
         NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ,QByteArray());
         NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ,QByteArray());
     });
+
+    // 延迟检查未完成的传输任务
+    QTimer::singleShot(1000, this, &MainWindow::checkIncompleteTransfers);
 }
 
 MainWindow::~MainWindow()
@@ -153,6 +170,24 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // 当鼠标进入任何子控件时，如果不在调整大小状态，恢复箭头光标
     if (event->type() == QEvent::Enter && m_resizeDir == None) {
         setCursor(Qt::ArrowCursor);
+    }
+    
+    // 当鼠标在子控件上移动时，检查是否在窗口边缘
+    if (event->type() == QEvent::MouseMove && m_resizeDir == None) {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+        QWidget *widget = qobject_cast<QWidget*>(watched);
+        if (widget) {
+            QPoint globalPos = widget->mapToGlobal(mouseEvent->pos());
+            QPoint windowPos = mapFromGlobal(globalPos);
+            
+            // 只有在边缘区域才更新光标，否则保持箭头
+            ResizeDirection dir = getResizeDirection(windowPos);
+            if (dir == None) {
+                setCursor(Qt::ArrowCursor);
+            } else {
+                updateCursorShape(windowPos);
+            }
+        }
     }
     
     return QWidget::eventFilter(watched, event);
@@ -583,17 +618,47 @@ void MainWindow::connectSignalsAndSlots()
     connect(&NetworkManager::instance(),&NetworkManager::sigFileTransferResponse,this,&MainWindow::onsigFileTransferResponse);
 
     // 关联文件传输信号
-    connect(&FileTransferManager::instance(),&FileTransferManager::transferStarted,this,&MainWindow::onFileTransferStarted);
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferStarted,
+    this,[this](const QString &fileId,const QString &fileName){
+        // 记录当前活动的传输
+        ReconnectTransferManager::instance().saveActiveTransfer(fileId, fileName,m_currentFriendId,true);
+
+        onFileTransferStarted(fileId, fileName);
+    });
+
+
     connect(&FileTransferManager::instance(),&FileTransferManager::transferProgress,this,&MainWindow::onFileTransferProgress);
-    connect(&FileTransferManager::instance(),&FileTransferManager::transferCompleted,this,&MainWindow::onFileTransferCompleted);
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferCompleted,
+    this,[this](const QString &fileId){
+        // 移除活动传输记录
+        ReconnectTransferManager::instance().removeCompletedTransfer(fileId);
+        onFileTransferCompleted(fileId);
+    });
+
     connect(&FileTransferManager::instance(),&FileTransferManager::transferFailed,this,&MainWindow::onFileTransferFailed);
     connect(&FileTransferManager::instance(),&FileTransferManager::sendFileChunk,this,&MainWindow::onSendFileChunk);
+    connect(&FileTransferManager::instance(),&FileTransferManager::transferPaused,this,&MainWindow::onFileTransferPaused);
 
     // 关联文件接收信号
     connect(&NetworkManager::instance(),&NetworkManager::receiveChunk,this,&MainWindow::onFileReceiveChunk);
     connect(&FileReceiver::instance(),&FileReceiver::receiveProgress,this,&MainWindow::onFileReceiveProgress);
-    connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,this,&MainWindow::onFileReceiveCompleted);
+
+    connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,
+    this,[this](const QString &fileId,const QString &savePath){
+        // 移除活动传输记录
+        ReconnectTransferManager::instance().removeCompletedTransfer(fileId);
+        onFileReceiveCompleted(fileId,savePath);
+    });
+
     connect(&FileReceiver::instance(),&FileReceiver::receiveFailed,this,&MainWindow::onFileReceiveFailed);
+
+    // 关联断线重连传输信号
+    connect(&ReconnectTransferManager::instance(),&::ReconnectTransferManager::readyToResumeTransfer,this,&MainWindow::onReadyToResumeTransfers);
+    connect(&ReconnectTransferManager::instance(),&ReconnectTransferManager::requestResumeTransfer,this,&MainWindow::onRequestResumeTransfer);
+
+    // 关联断点续传协议信号
+    connect(&NetworkManager::instance(),&NetworkManager::sigFileResumeReq,this,&MainWindow::onFileResumeReq);
+    connect(&NetworkManager::instance(),&NetworkManager::sigFileResumeResp,this,&MainWindow::onFileResumeResp);
 
     // 关联群聊信号
     connect(&NetworkManager::instance(), &NetworkManager::sigGroupListReceived, this, &MainWindow::onGroupListReceived);
@@ -621,6 +686,116 @@ void MainWindow::removeRequestAndRefresh(int requesterId)
         }
     }
     updateNewFriendsPage();
+}
+
+void MainWindow::sendFileTransferRequestForResume(const QString &fileId, const TransferState &state, int friendId)
+{
+    // 构建文件传输请求
+    FileTransferReq req;
+    memset(&req, 0, sizeof(FileTransferReq));
+
+    strncpy(req.fileName, state.fileName.toUtf8().constData(), sizeof(req.fileName) - 1);
+    req.fileName[255] = '\0';
+    req.fileSize = state.fileSize;
+
+    quint64 chunkSize = 64 * 1024;
+    req.totalChunks = (state.fileSize + chunkSize - 1) / chunkSize;
+
+    strncpy(req.fileId, fileId.toUtf8().constData(), sizeof(req.fileId) - 1);
+    req.fileId[63] = '\0';
+
+    // 发送请求
+    QByteArray packet = makePacket(MSG_FILE_TRANSFER_REQ, QByteArray((char*)&req, sizeof(FileTransferReq)),0,friendId);
+    NetworkManager::instance().sendRow(packet);
+
+    LOG_INFO(QString("重新发送文件传输请求: %1 (已完成 %2/%3 分片)").arg(state.fileName).arg(state.completedChunks.size()).arg(state.totalChunks));
+
+    // 待处理列表添加
+    m_pendingFileTransfers[fileId] = state.filePath;
+}
+
+void MainWindow::checkIncompleteTransfers()
+{
+    // 获取所有未完成的传输
+    QList<TransferState> incompleteTransfers = TransferStateManager::instance().getIncompleteTransfers();
+
+    if(incompleteTransfers.isEmpty()){
+        return;
+    }
+
+    LOG_INFO_FMT("发现 %1 个未完成的传输任务", incompleteTransfers.size());
+
+    // 构建提示消息
+    QString msg = QString("发现 %1 个未完成的文件传输：\n").arg(incompleteTransfers.size());
+
+    int displayCount = qMin(5, incompleteTransfers.size());
+    for(int i = 0; i < displayCount; i++){
+        const TransferState &state = incompleteTransfers[i];
+        QString status = state.isSending ? "发送中" : "接收中";
+        int progress = state.totalChunks > 0 ?
+            (state.completedChunks.size() * 100) / state.totalChunks : 0;
+        msg += QString("\n• %1 (%2, %3%)")
+                   .arg(state.fileName, status)
+                   .arg(progress);
+    }
+
+    if(incompleteTransfers.size() > 5){
+        msg += QString("\n... 共 %1 个").arg(incompleteTransfers.size());
+    }
+
+    msg += "\n\n是否尝试恢复这些传输？";
+
+    QMessageBox::StandardButton res = QMessageBox::question(
+        this, "恢复未完成的传输", msg,
+        QMessageBox::Yes | QMessageBox::No | QMessageBox::Ignore);
+
+    if(res == QMessageBox::Yes){
+        // 尝试恢复所有传输
+        for(const TransferState &state : incompleteTransfers){
+            if(state.isSending){
+                // 发送端：检查文件是否存在
+                if(QFile::exists(state.filePath)){
+                    // 记录到活动传输
+                    ReconnectTransferManager::instance().saveActiveTransfer(
+                        state.fileId, state.fileName, state.friendId, true);
+
+                    // 发送恢复请求
+                    NetworkManager::instance().requestResumeTransfer(state.fileId, state.friendId);
+
+                    QString displayText = QString("[请求恢复] %1").arg(state.fileName);
+                    ChatMessage chatMsg(displayText, true, ":/res/me.jpg");
+                    m_chatModel->addMessage(chatMsg);
+                } else {
+                    LOG_WARN_FMT("文件不存在，无法恢复: %1", state.filePath);
+                    TransferStateManager::instance().removeTransferState(state.fileId);
+                }
+            } else {
+                // 接收端：等待对方继续发送
+                ReconnectTransferManager::instance().saveActiveTransfer(
+                    state.fileId, state.fileName, state.friendId, false);
+
+                QString displayText = QString("[等待恢复] %1 (%2%)")
+                                          .arg(state.fileName)
+                                          .arg(state.totalChunks > 0 ?
+                                                   (state.completedChunks.size() * 100) / state.totalChunks : 0);
+                ChatMessage chatMsg(displayText, false, ":/res/you.jpeg");
+                m_chatModel->addMessage(chatMsg);
+            }
+        }
+        ui->chatList->scrollToBottom();
+    } else if(res == QMessageBox::Ignore){
+        // 清理所有未完成的传输状态
+        for(const TransferState &state : incompleteTransfers){
+            TransferStateManager::instance().removeTransferState(state.fileId);
+
+            // 如果是接收端，删除临时文件
+            if(!state.isSending && !state.tempFilePath.isEmpty()){
+                QFile::remove(state.tempFilePath);
+            }
+        }
+        LOG_INFO("用户选择忽略并清理未完成的传输");
+    }
+    // 如果选择No，保留状态但不恢复
 }
 
 void MainWindow::onFriendListReceived(QList<FriendInfo> list)
@@ -1035,6 +1210,10 @@ void MainWindow::onSigFileTransferRequest(const QString &fileId, const QString &
 {
     // 接收文件方
 
+    // 检查是否是断点续传
+    TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+    bool isResume = (!state.fileId.isEmpty() && !state.isSending && state.fileSize == fileSize);
+
     // 弹出对话框询问是否接收
     QString sizeStr;
     if(fileSize < 1024){
@@ -1045,21 +1224,47 @@ void MainWindow::onSigFileTransferRequest(const QString &fileId, const QString &
         sizeStr = QString::number(fileSize / (1024.0 * 1024.0),'f',2) + "MB";
     }
 
-    QString msg = QString("用户 %1 向你发送文件：\n文件名：%2\n文件大小：%3\n\n是否接收文件？").arg(senderId).arg(fileName, sizeStr);
+    // 根据是否断点续传显示不同提示
+    QString msg;
+    if(isResume){
+        int completedChunks = state.completedChunks.size();
+        int totalChunks = state.totalChunks;
+        msg = QString("用户 %1 请求继续发送文件：\n"
+            "文件名：%2\n"
+            "文件大小：%3\n"
+            "已接收：%4/%5 分片\n\n"
+            "是否继续接收文件？")
+                  .arg(senderId).arg(fileName, sizeStr)
+                  .arg(completedChunks).arg(totalChunks);
+    }else{
+        msg = QString("用户 %1 向你发送文件：\n"
+            "文件名：%2\n"
+            "文件大小：%3\n\n"
+            "是否接收文件？")
+                  .arg(senderId).arg(fileName, sizeStr);
+    }
 
-    QMessageBox::StandardButton res = QMessageBox::question(this,"接收文件",msg,QMessageBox::Yes | QMessageBox::No);
+    QString title = isResume ? "继续接收文件" : "接收文件";
+    auto res = QMessageBox::question(this,title,msg,QMessageBox::Yes | QMessageBox::No);
 
-    // 文件传输响应(回复给发送文件方)
     FileTransferResp resp;
     memset(&resp,0,sizeof(FileTransferResp));
     strncpy(resp.fileId,fileId.toUtf8().constData(),63);
     resp.accepted = (res == QMessageBox::Yes) ? 1 : 0;
 
     if(res == QMessageBox::Yes){
-        // 开始接收文件
+        // 开始接收文件(支持断点续传)
         FileReceiver::instance().startReceiving(fileId,fileName,fileSize);
 
-        QString displayText = QString("[接收文件] %1 (%2)").arg(fileName, sizeStr);
+        // 记录活动传输
+        ReconnectTransferManager::instance().saveActiveTransfer(fileId, fileName, senderId,false);
+
+        QString displayText;
+        if(isResume){
+            displayText = QString("[继续接收] %1 (%2)").arg(fileName, sizeStr);
+        }else{
+            displayText = QString("[接收文件] %1 (%2)").arg(fileName, sizeStr);
+        }
         ChatMessage msg(displayText,false,":/res/you.jpeg");
         m_chatModel->addMessage(msg);
         ui->chatList->scrollToBottom();
@@ -1078,6 +1283,17 @@ void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
             // 移除并返回value
             QString filePath = m_pendingFileTransfers.take(fileId);
 
+            // 检查是否是断点传续
+            TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+            if(!state.fileId.isEmpty() && state.completedChunks.size() > 0){
+                LOG_INFO_FMT("恢复文件传输 %1（从第 %2 个分片开始）",state.fileName,state.completedChunks.size());
+            }
+
+            QString displayText = QString("[恢复传输] %1 (已完成 %2/%3 分片)").arg(state.fileName).arg(state.completedChunks.size()).arg(state.totalChunks);
+            ChatMessage msg(displayText,true,":/res/me.jpg");
+            m_chatModel->addMessage(msg);
+            ui->chatList->scrollToBottom();
+            
             // 开始传输文件
             FileTransferManager::instance().startSendFile(fileId,filePath,m_currentFriendId);
             // QMessageBox::information(this, "成功", "对方已接受文件传输,开始发送...");
@@ -1124,6 +1340,12 @@ void MainWindow::onFileTransferFailed(const QString &fileId, const QString &erro
 
     QMessageBox::warning(this, "传输失败", "文件传输失败: " + error);
     LOG_ERROR_FMT("File %1 transfer failed,%2",fileId,error);
+}
+
+void MainWindow::onFileTransferPaused(const QString &fileId, int lastChunkIndex)
+{
+    LOG_INFO_FMT("File transfer paused:%1, last chunk index:%2",fileId,lastChunkIndex);
+    QMessageBox::information(this, "传输暂停", "文件传输已暂停");
 }
 
 void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk, int chunkIndex, int totalChunks, int friendId)
@@ -1318,6 +1540,9 @@ void MainWindow::onConnectionStateChanged(bool connected)
     if(connected){
         LOG_INFO("网络状态已恢复");
 
+        // 通知重连传输管理器
+        ReconnectTransferManager::instance().onNetworkReconnected();
+
         // 延迟请求好友列表和群列表
         QTimer::singleShot(500,[](){
             NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ,QByteArray());
@@ -1325,6 +1550,7 @@ void MainWindow::onConnectionStateChanged(bool connected)
         });
     }else{
         LOG_WARN("网络已断开");
+        ReconnectTransferManager::instance().onNetworkDisconnected();
     }
 }
 
@@ -1338,6 +1564,191 @@ void MainWindow::onMaxAttemptsReached()
 {
     LOG_INFO("已达到最大重连次数");
     QMessageBox::warning(this,"连接失败","无法连接，请检查网络后重试",QMessageBox::Ok);
+}
+
+void MainWindow::onReadyToResumeTransfers(const QList<PendingTransferResume> &transfers)
+{
+    if(transfers.isEmpty()){
+        return;
+    }
+
+    LOG_INFO_FMT("准备恢复 %1 个传输任务", transfers.size());
+
+    // 显示提示对话框
+    QString msg = QString("检测到 %1 个未完成的传输任务，是否恢复？").arg(transfers.size());
+
+    for(int i = 0; i < qMin(3, transfers.size()); i++){
+        const PendingTransferResume &transfer = transfers[i];
+        msg += QString("\n%1: %2").arg(transfer.fileName).arg(transfer.isSending ? "发送中" : "接收中");
+    }
+
+    if(transfers.size() > 3){
+        msg += QString("\n... 共 %1 个").arg(transfers.size());
+    }
+
+    QMessageBox::StandardButton res = QMessageBox::question(this, "恢复传输", msg, QMessageBox::Yes | QMessageBox::No);
+    if (res == QMessageBox::No) {
+        // 用户选择不恢复，清理待恢复任务
+        ReconnectTransferManager::instance().clearPendingResumes();
+        LOG_INFO("用户取消恢复文件传输");
+    }
+
+}
+
+void MainWindow::onRequestResumeTransfer(const QString &fileId, int friendId, bool isSending)
+{
+    LOG_INFO_FMT("请求恢复传输: %1 (发送中: %2)", fileId, isSending);
+
+    // 加载传输状态
+    TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+
+    if(state.fileId.isEmpty()){
+        LOG_WARN_FMT("无法加载传输状态: %1", fileId);
+        return;
+    }
+
+    if(isSending){
+        // 恢复发送
+        if(!QFile::exists(state.filePath)){
+            LOG_WARN_FMT("文件不存在: %1", state.filePath);
+            QMessageBox::warning(this, "恢复传输", QString("文件 %1 不存在，无法继续传输").arg(state.fileName));
+            TransferStateManager::instance().removeTransferState(fileId);
+            return;
+        }
+
+        // 先发送恢复传输请求，查询对方已接收的分片
+        NetworkManager::instance().requestResumeTransfer(fileId, friendId);
+
+        // 显示提示信息
+        QString displayText = QString("[请求恢复] %1").arg(state.fileName);
+        ChatMessage msg(displayText, true, ":/res/me.jpg");
+        m_chatModel->addMessage(msg);
+        ui->chatList->scrollToBottom();
+    }else{
+        // 恢复接收
+        // 接收方只需等待对方继续发送，FileReceiver 会自动处理断点续传
+        LOG_INFO_FMT("等待对方继续发送文件: %1", state.fileName);
+
+        // 显示提示信息
+        QString displayText = QString("[等待恢复] %1").arg(state.fileName);
+        ChatMessage msg(displayText, false, ":/res/you.jpeg");
+        m_chatModel->addMessage(msg);
+        ui->chatList->scrollToBottom();
+    }
+}
+
+void MainWindow::onFileResumeReq(const QString &fileId, int senderId)
+{
+    // 作为接收方，收到发送方的恢复传输请求
+    LOG_INFO_FMT("收到恢复传输请求: %1 from %2", fileId, senderId);
+
+    // 检查是否有该文件的接收状态
+    ReceivingFileInfo *info = FileReceiver::instance().getReceivingInfo(fileId);
+    TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+
+    FileResumeResp resp;
+    memset(&resp, 0, sizeof(resp));
+    strncpy(resp.fileId, fileId.toUtf8().constData(), 63);
+
+    QByteArray responseBody;
+
+    if(info || (!state.fileId.isEmpty() && !state.isSending)){
+        // 可以恢复
+        resp.canResume = 1;
+
+        if(info){
+            resp.totalChunks = info->totalChunks;
+            resp.receivedChunks = info->receivedChunks;
+        } else {
+            resp.totalChunks = state.totalChunks;
+            resp.receivedChunks = state.completedChunks.size();
+        }
+
+        responseBody.append((char*)&resp, sizeof(resp));
+
+        // 添加已接收分片位图
+        QByteArray bitmap;
+        if(info){
+            bitmap = FileReceiver::instance().getCompletedChunksBitmap(fileId);
+        } else {
+            // 从状态构建位图
+            int bitmapSize = (state.totalChunks + 7) / 8;
+            bitmap = QByteArray(bitmapSize, 0);
+            for(int chunkIndex : state.completedChunks){
+                int byteIndex = chunkIndex / 8;
+                int bitIndex = chunkIndex % 8;
+                if(byteIndex < bitmap.size()){
+                    bitmap[byteIndex] = bitmap[byteIndex] | (1 << bitIndex);
+                }
+            }
+        }
+        responseBody.append(bitmap);
+
+        LOG_INFO_FMT("发送恢复传输响应: canResume=true, received=%1/%2", resp.receivedChunks, resp.totalChunks);
+    } else {
+        // 无法恢复
+        resp.canResume = 0;
+        resp.totalChunks = 0;
+        resp.receivedChunks = 0;
+        responseBody.append((char*)&resp, sizeof(resp));
+
+        LOG_INFO("发送恢复传输响应: canResume=false");
+    }
+
+    QByteArray packet = makePacket(MSG_FILE_RESUME_RESP, responseBody, 0, senderId);
+    NetworkManager::instance().sendRow(packet);
+}
+
+void MainWindow::onFileResumeResp(const QString &fileId, bool canResume, int totalChunks, int receivedChunks, const QByteArray &bitmap)
+{
+    // 作为发送方，收到接收方的恢复传输响应
+    LOG_INFO(QString("收到恢复传输响应: %1, canResume=%2, received=%3/%4").arg(fileId).arg(canResume).arg(receivedChunks).arg(totalChunks));
+
+    TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+    if(state.fileId.isEmpty()){
+        LOG_WARN_FMT("无法加载传输状态: %1", fileId);
+        return;
+    }
+
+    if(canResume){
+        // 解析位图，更新已完成分片
+        QSet<int> completedChunks;
+        for(int i = 0; i < totalChunks; ++i){
+            int byteIndex = i / 8;
+            int bitIndex = i % 8;
+            if(byteIndex < bitmap.size()){
+                if(bitmap[byteIndex] & (1 << bitIndex)){
+                    completedChunks.insert(i);
+                }
+            }
+        }
+
+        // 更新状态
+        state.completedChunks = completedChunks;
+        TransferStateManager::instance().saveTransferState(state);
+
+        // 显示提示信息
+        QString displayText = QString("[恢复传输] %1 (已完成 %2/%3 分片)")
+                                  .arg(state.fileName).arg(receivedChunks).arg(totalChunks);
+        ChatMessage msg(displayText, true, ":/res/me.jpg");
+        m_chatModel->addMessage(msg);
+        ui->chatList->scrollToBottom();
+
+        // 开始传输（FileTransferManager会自动跳过已完成的分片）
+        FileTransferManager::instance().startSendFile(fileId, state.filePath, state.friendId);
+    } else {
+        // 无法恢复，需要重新开始
+        LOG_WARN_FMT("对方无法恢复传输: %1", fileId);
+
+        QString msg = QString("对方无法恢复文件 %1 的传输，是否重新发送？").arg(state.fileName);
+        auto res = QMessageBox::question(this, "恢复传输失败", msg, QMessageBox::Yes | QMessageBox::No);
+
+        if(res == QMessageBox::Yes){
+            // 清除旧状态，重新发送
+            TransferStateManager::instance().removeTransferState(fileId);
+            sendFileTransferRequestForResume(fileId, state, state.friendId);
+        }
+    }
 }
 
 void MainWindow::on_btnSend_clicked()
@@ -1539,14 +1950,18 @@ void MainWindow::on_btnFile_clicked()
 
 void MainWindow::on_btnGroup_clicked()
 {
-    // 获取好友数据
+    // 获取好友数据（只包含好友，排除群聊）
     QList<FriendSelectInfo> friendList;
     int count = ui->contactList->count();
     for (int i = 0; i < count; ++i) {
         QListWidgetItem *item = ui->contactList->item(i);
         int uid = item->data(ContactDelegate::RoleStatus).toInt();
-        QString name = item->data(ContactDelegate::RoleName).toString();
-        friendList.append({uid,name});
+        
+        // 只添加好友（ID为正数），排除群聊（ID为负数）和自己（ID为0或负数）
+        if(uid > 0){
+            QString name = item->data(ContactDelegate::RoleName).toString();
+            friendList.append({uid,name});
+        }
     }
 
     // 弹出创建群聊窗口

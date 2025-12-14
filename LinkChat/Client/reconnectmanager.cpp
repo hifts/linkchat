@@ -98,7 +98,7 @@ void ReconnectManager::startReconnect()
     emit reconnectStateChanged(m_reconnectAttempts + 1,delay);
 
     // 启动重连定时器
-    m_reconnectTimer->start();
+    m_reconnectTimer->start(delay);
 }
 
 void ReconnectManager::stopReconnect()
@@ -157,7 +157,7 @@ void ReconnectManager::doReconnect()
     // 重连次数增加1
     m_reconnectAttempts++;
 
-    QString msg = QString("尝试重连%1 : %2 (第%3次)").arg(m_serverIp,m_serverPort).arg(m_reconnectAttempts);
+    QString msg = QString("尝试重连%1 : %2 (第%3次)").arg(m_serverIp).arg(m_serverPort).arg(m_reconnectAttempts);
     LOG_INFO(msg);
 
     // 发送重连信号，通知NetworkManager执行

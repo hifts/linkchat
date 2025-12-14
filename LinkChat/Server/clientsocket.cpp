@@ -302,6 +302,61 @@ void ClientSocket::onReadyRead()
             }
             break;
         }
+        case MSG_FILE_RESUME_REQ: {
+            // 恢复传输请求 - 转发给目标用户
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if(targetSocket){
+                this->writePacket(targetSocket, MSG_FILE_RESUME_REQ, bodyData, this->m_uid, targetId);
+                LOG_INFO_FMT("Forwarding file resume request to user %1", targetId);
+            }else{
+                // 目标用户不在线，返回无法恢复
+                FileResumeResp resp;
+                memset(&resp, 0, sizeof(resp));
+                if(bodyData.size() >= (int)sizeof(FileResumeReq)){
+                    FileResumeReq *req = (FileResumeReq*)bodyData.data();
+                    strncpy(resp.fileId, req->fileId, 63);
+                }
+                resp.canResume = 0;
+                this->write(makePacket(MSG_FILE_RESUME_RESP, QByteArray((char*)&resp, sizeof(resp)), targetId, this->m_uid));
+                LOG_INFO_FMT("Target user %1 is offline, cannot resume transfer", targetId);
+            }
+            break;
+        }
+        case MSG_FILE_RESUME_RESP: {
+            // 恢复传输响应 - 转发给发送者
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if(targetSocket){
+                this->writePacket(targetSocket, MSG_FILE_RESUME_RESP, bodyData, this->m_uid, targetId);
+                LOG_INFO_FMT("Forwarding file resume response to user %1", targetId);
+            }
+            break;
+        }
+        case MSG_FILE_VERIFY_REQ: {
+            // 文件校验请求 - 转发给目标用户
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if(targetSocket){
+                this->writePacket(targetSocket, MSG_FILE_VERIFY_REQ, bodyData, this->m_uid, targetId);
+                LOG_INFO_FMT("Forwarding file verify request to user %1", targetId);
+            }
+            break;
+        }
+        case MSG_FILE_VERIFY_RESP: {
+            // 文件校验响应 - 转发给发送者
+            int targetId = header->dest_id;
+            ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
+
+            if(targetSocket){
+                this->writePacket(targetSocket, MSG_FILE_VERIFY_RESP, bodyData, this->m_uid, targetId);
+                LOG_INFO_FMT("Forwarding file verify response to user %1", targetId);
+            }
+            break;
+        }
         case MSG_CREATE_GROUP_REQ: {
             // 创建群聊请求
             CreateGroupReq *req = (CreateGroupReq*)bodyData.data();
