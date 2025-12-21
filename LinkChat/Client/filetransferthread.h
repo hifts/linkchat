@@ -12,6 +12,7 @@ public:
     explicit FileTransferThread(const QString &filePath,
                                 const QString &fileId,
                                 int friendId,
+                                int currentUserId,
                                 QObject *parent = nullptr);
 
     ~FileTransferThread();
@@ -57,6 +58,7 @@ private:
     QString m_filePath;         // 文件路径
     QString m_fileId;           // 文件唯一标识
     int m_friendId;             // 好友ID
+    int m_currentUserId;        // 当前用户ID
     quint64 m_chunkSize;        // 分片大小
     bool m_stopped;             // 是否停止传输文件
     bool m_paused;              // 是否暂停传输文件

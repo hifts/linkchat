@@ -14,6 +14,8 @@ add_library(LinkChatCommon STATIC
     packet.h
     packet.cpp
     logger.h
+    encryptionmanager.h
+    encryptionmanager.cpp
 )
 
 target_link_libraries(LinkChatCommon PRIVATE Qt5::Core)

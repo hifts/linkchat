@@ -1,6 +1,7 @@
 #include "filereceiver.h"
 #include "transferstatemanager.h"
 #include "logger.h"
+#include "encryptionmanager.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -30,7 +31,7 @@ FileReceiver::~FileReceiver()
     m_receivingFiles.clear();
 }
 
-bool FileReceiver::startReceiving(const QString &fileId, const QString &fileName, qint64 fileSize)
+bool FileReceiver::startReceiving(const QString &fileId, const QString &fileName, qint64 fileSize, int senderId, const QString &expectedMD5)
 {
     QMutexLocker locker(&m_mutex);
 
@@ -146,6 +147,8 @@ bool FileReceiver::startReceiving(const QString &fileId, const QString &fileName
     info->tempPath = tempPath;
     info->totalSize = fileSize;
     info->totalChunks = (fileSize + 64 * 1024 -1) / (64 * 1024);
+    info->senderId = senderId;          // 存储发送者ID用于解密
+    info->expectedMD5 = expectedMD5;    // 存储期望的MD5值
 
     // 保存传输文件任务
     m_receivingFiles[fileId] = info;
@@ -170,6 +173,7 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
 {
     QString tempPath;
     QString savePath;
+    QString expectedMD5;  // 期望的MD5值
     bool isCompleted = false;
 
     {
@@ -201,7 +205,49 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
             return true; // 重复分片，直接忽略
         }
 
-        // 写入文件
+        // 解密文件分片（如果有发送者ID）
+        QByteArray decryptedData = data;
+        if (info->senderId > 0 && m_currentUserId > 0) {
+            // 获取聊天密钥（使用当前用户ID和发送者ID）
+            QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, info->senderId);
+            
+            if (key.isEmpty()) {
+                LOG_ERROR_FMT("[FileReceiver] Failed to get encryption key for users %1 and %2", m_currentUserId, info->senderId);
+                QString errorMsg = "无法获取解密密钥";
+                // 清理资源
+                if(info->file){
+                    info->file->close();
+                    delete info->file;
+                }
+                delete info;
+                m_receivingFiles.remove(fileId);
+                emit receiveFailed(fileId, errorMsg);
+                return false;
+            }
+            
+            // 解密分片数据
+            decryptedData = EncryptionManager::instance().xorEncryptDecrypt(data, key);
+            
+            if (decryptedData.isEmpty() && !data.isEmpty()) {
+                LOG_ERROR(QString("[FileReceiver] Failed to decrypt chunk %1 for file %2")
+                         .arg(chunkIndex).arg(fileId));
+                QString errorMsg = "文件分片解密失败";
+                // 清理资源
+                if(info->file){
+                    info->file->close();
+                    delete info->file;
+                }
+                delete info;
+                m_receivingFiles.remove(fileId);
+                emit receiveFailed(fileId, errorMsg);
+                return false;
+            }
+            
+            LOG_DEBUG(QString("[FileReceiver] Decrypted chunk %1: encrypted size=%2, decrypted size=%3")
+                     .arg(chunkIndex).arg(data.size()).arg(decryptedData.size()));
+        }
+
+        // 写入文件（使用解密后的数据）
         quint64 offset = static_cast<quint64>(chunkIndex) * 64 * 1024;
         if(!info->file->seek(offset)){
             LOG_ERROR_FMT("Failed to write chunk:%1",chunkIndex);
@@ -218,8 +264,8 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
             return false;
         }
 
-        qint64 written = info->file->write(data);
-        if(written != (qint64)data.size()){
+        qint64 written = info->file->write(decryptedData);
+        if(written != (qint64)decryptedData.size()){
             // 写入字节数不等于实际字节数时
             LOG_ERROR_FMT("Failed to write chunk:%1",chunkIndex);
             QString errorMsg = "写入文件失败";
@@ -235,10 +281,10 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
             return false;
         }
 
-        // 更新接收信息
+        // 更新接收信息（使用解密后的数据大小）
         info->receivedChunkMap[chunkIndex] = true;
         info->receivedChunks++;
-        info->receivedSize += data.size();
+        info->receivedSize += decryptedData.size();
 
         // 标记分片已完成（每次都要更新内存状态，内部会每10个分片才持久化一次）
         TransferStateManager::instance().markChunkCompleted(fileId, chunkIndex);
@@ -261,6 +307,7 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
             // 保存需要的信息，因为后面会删除info
             tempPath = info->tempPath;
             savePath = info->savePath;
+            expectedMD5 = info->expectedMD5;  // 保存期望的MD5值
             isCompleted = true;
 
             // 清理接收任务（在锁内完成）
@@ -286,7 +333,20 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                 LOG_INFO_FMT("Temp file renamed: %1 -> %2", tempPath, savePath);
             } else {
                 LOG_ERROR_FMT("Failed to rename temp file: %1 -> %2", tempPath, savePath);
+                emit receiveFailed(fileId, "重命名临时文件失败");
+                return false;
             }
+        }
+
+        // 验证文件MD5（如果提供了期望的MD5值）
+        if (!expectedMD5.isEmpty()) {
+            bool verified = verifyFileMD5(savePath, expectedMD5);
+            if (!verified) {
+                LOG_ERROR_FMT("File MD5 verification failed for: %1", savePath);
+                emit receiveFailed(fileId, "文件完整性验证失败");
+                return false;
+            }
+            LOG_INFO_FMT("File MD5 verified successfully: %1", savePath);
         }
 
         LOG_INFO_FMT("File received completed:%1",savePath);

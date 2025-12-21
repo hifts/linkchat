@@ -50,11 +50,27 @@ void ClientSocket::onReadyRead()
             break;
         }
         case MSG_REGISTER_REQ:{
-            // 解包（登录/注册包）
-            LoginReq *req = (LoginReq*)bodyData.data();
+            // 解包注册请求（使用新的RegisterReq结构）
+            RegisterReq *req = (RegisterReq*)bodyData.data();
 
-            // 查库
-            bool ok = DBManager::instance().handelRegister(req->userName,req->password);
+            // 注意：客户端已经发送了Base64编码的passwordHash和salt
+            // 所以这里直接使用字符串，不需要再次编码
+            QString passwordHashBase64 = QString::fromUtf8(req->passwordHash);
+            QString saltBase64 = QString::fromUtf8(req->salt);
+            
+            qDebug() << "[Server] Registration request for user:" << req->userName;
+            qDebug() << "[Server] Password hash length:" << passwordHashBase64.length() 
+                     << "Salt length:" << saltBase64.length();
+
+            // 使用新版本的handelRegister，直接传递Base64字符串
+            // 但是函数期望的是QByteArray salt，所以需要先解码
+            QByteArray salt = QByteArray::fromBase64(saltBase64.toUtf8());
+            
+            bool ok = DBManager::instance().handelRegister(
+                req->userName, 
+                passwordHashBase64,
+                salt
+            );
 
             // 回包
             LoginResp resp;
@@ -69,8 +85,10 @@ void ClientSocket::onReadyRead()
             // 记录用户在数据库中的id和用户名
             int uid = -1;
             QString name = req->userName;
+            QByteArray salt, passwordHash;
 
-            bool ok = DBManager::instance().handleLogin(req->userName,req->password,uid);
+            // 验证用户登录（使用加密密码）
+            bool ok = DBManager::instance().handleLogin(req->userName, req->password, uid, salt, passwordHash);
 
             // 回包
             LoginResp resp;
@@ -182,7 +200,7 @@ void ClientSocket::onReadyRead()
             QString keyword = QString::fromUtf8(req->keyword).trimmed();
 
             QString msg = QString("User %1 searching for: %2").arg(m_uid).arg(keyword);
-            LOG_INFO(msg);
+            // Search request received
 
             // 查库
             QList<FriendInfo> resultList = DBManager::instance().searchUsers(keyword,m_uid);
@@ -264,7 +282,6 @@ void ClientSocket::onReadyRead()
                 this->writePacket(targetSocket,MSG_FILE_TRANSFER_REQ,bodyData,this->m_uid,targetId);
             }else{
                 // 不在线
-                LOG_INFO_FMT("Send file failed,target user %1 is offline",targetId);
             }
             break;
         }
@@ -298,7 +315,6 @@ void ClientSocket::onReadyRead()
                 }
             }else{
                 // 目标用户不在线，记录日志
-                LOG_INFO_FMT("Target user %1 is offline.Cannot forward file chunk.",targetId);
             }
             break;
         }
@@ -320,7 +336,6 @@ void ClientSocket::onReadyRead()
                 }
                 resp.canResume = 0;
                 this->write(makePacket(MSG_FILE_RESUME_RESP, QByteArray((char*)&resp, sizeof(resp)), targetId, this->m_uid));
-                LOG_INFO_FMT("Target user %1 is offline, cannot resume transfer", targetId);
             }
             break;
         }
@@ -468,9 +483,10 @@ void ClientSocket::onReadyRead()
             int groupId = msgHeader->groupId;
 
             // 获取消息内容（去掉GroupChatMessage头部）
+            // 注意：msgContent 是加密的密文，服务器不解密，只转发
             QByteArray msgContent = bodyData.mid(sizeof(GroupChatMessage));
 
-            // 保存到群聊消息表
+            // 保存到群聊消息表（存储的是加密数据）
             DBManager::instance().saveGroupMessage(groupId, this->m_uid, msgContent);
 
             // 获取群成员列表
@@ -493,10 +509,10 @@ void ClientSocket::onReadyRead()
 
                 ClientSocket* memberSocket = TcpServer::instance().getUserSocket(memberId);
                 if (memberSocket) {
-                    // 在线：直接转发
+                    // 在线：直接转发加密消息（服务器不解密）
                     memberSocket->write(makePacket(MSG_GROUP_CHAT_TEXT, forwardBody, this->m_uid, memberId));
                 } else {
-                    // 离线：保存离线消息
+                    // 离线：保存加密的离线消息
                     DBManager::instance().saveGroupOfflineMessage(groupId, this->m_uid, memberId, msgContent);
                 }
             }

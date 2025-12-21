@@ -1,10 +1,12 @@
 #include "registerdialog.h"
 #include "networkmanager.h"
 #include "packet.h"
+#include "encryptionmanager.h"
 #include "ui_registerdialog.h"
 
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QDebug>
 
 RegisterDialog::RegisterDialog(QWidget *parent)
     : QDialog(parent)
@@ -150,14 +152,52 @@ void RegisterDialog::on_btnOk_clicked()
         return;
     }
 
-    // 打包（登陆/注册包）
-    LoginReq req;
-    memset(&req,0,sizeof(LoginReq));        // 清空内存
-    strncpy(req.userName,user.toStdString().c_str(),32);
-    strncpy(req.password,pwd.toStdString().c_str(),32);
-
+    // 生成随机盐值
+    QByteArray salt = EncryptionManager::instance().generateSalt();
+    if(salt.isEmpty()){
+        qCritical() << "[RegisterDialog] Failed to generate salt";
+        QMessageBox::critical(this,"错误","生成盐值失败，请重试");
+        return;
+    }
+    
+    // 对密码进行哈希
+    QByteArray passwordHash = EncryptionManager::instance().hashPassword(pwd, salt);
+    if(passwordHash.isEmpty()){
+        qCritical() << "[RegisterDialog] Failed to hash password";
+        QMessageBox::critical(this,"错误","密码哈希失败，请重试");
+        return;
+    }
+    
+    // 打包注册请求（使用新的RegisterReq结构）
+    RegisterReq req;
+    memset(&req, 0, sizeof(RegisterReq));
+    
+    // 复制用户名
+    strncpy(req.userName, user.toStdString().c_str(), 31);
+    req.userName[31] = '\0';
+    
+    // Base64编码哈希值和盐值
+    QByteArray hashBase64 = passwordHash.toBase64();
+    QByteArray saltBase64 = salt.toBase64();
+    
+    // 确保不超过字段限制
+    if(hashBase64.length() >= 64){
+        qWarning() << "[RegisterDialog] Password hash too long:" << hashBase64.length();
+        hashBase64 = hashBase64.left(63);
+    }
+    if(saltBase64.length() >= 64){
+        qWarning() << "[RegisterDialog] Salt too long:" << saltBase64.length();
+        saltBase64 = saltBase64.left(63);
+    }
+    
+    // 复制Base64编码的哈希值和盐值
+    strncpy(req.passwordHash, hashBase64.constData(), 63);
+    req.passwordHash[63] = '\0';
+    strncpy(req.salt, saltBase64.constData(), 63);
+    req.salt[63] = '\0';
+    
     // 发送请求给服务器
-    NetworkManager::instance().sendMsg(MSG_REGISTER_REQ,QByteArray((char*)&req,sizeof(LoginReq)));
+    NetworkManager::instance().sendMsg(MSG_REGISTER_REQ, QByteArray((char*)&req, sizeof(RegisterReq)));
 }
 
 

@@ -48,7 +48,6 @@ void TransferStateManager::saveTransferState(const TransferState &state)
 
     // 保存到文件
     saveToFile();
-    LOG_INFO(QString("Saved transfer state for file: %1").arg(state.fileId));
 }
 
 TransferState TransferStateManager::loadTransferState(const QString &fileId)
@@ -64,7 +63,6 @@ void TransferStateManager::removeTransferState(const QString &fileId)
     if(m_transfers.remove(fileId)){
         // 如果删除成功
         saveToFile();
-        LOG_INFO(QString("Removed transfer state for file: %1").arg(fileId));
     }else {
         LOG_WARN("Remove transfer state failed");
     }
@@ -134,7 +132,6 @@ void TransferStateManager::cleanupOldTransfers()
 
     for(const QString &fileId : oldFiles){
         m_transfers.remove(fileId);
-        LOG_INFO(QString("Removed old transfer state for file: %1").arg(fileId));
     }
 
     if(!oldFiles.isEmpty()){
@@ -229,7 +226,6 @@ void TransferStateManager::loadFromFile()
         }
         m_transfers[state.fileId] = state;
     }
-    LOG_INFO_FMT("Loaded %1 transfer states from file",m_transfers.size());
 }
 
 QString TransferStateManager::getStateFilePath() const

@@ -35,15 +35,12 @@ void ReconnectTransferManager::saveActiveTransfer(const QString &fileId, const Q
 
     resume.timestamp = QDateTime::currentMSecsSinceEpoch();
     m_activeTransfers[fileId] = resume;
-
-    LOG_INFO_FMT("Active transfer saved: %1 (sending: %2) ", fileId, isSending);
 }
 
 void ReconnectTransferManager::removeCompletedTransfer(const QString &fileId)
 {
     if(m_activeTransfers.contains(fileId)){
         m_activeTransfers.remove(fileId);
-        LOG_INFO_FMT("Completed transfer removed: %1", fileId);
     }
 }
 
@@ -64,12 +61,11 @@ void ReconnectTransferManager::onNetworkDisconnected()
         TransferState state = TransferStateManager::instance().loadTransferState(it.key());
         if(!state.fileId.isEmpty()){
             m_pengingResumes.append(it.value());
-            LOG_INFO_FMT("Pending transfer added: %1", it.value().fileId);
         }
     }
 
     if(!m_pengingResumes.isEmpty()){
-        LOG_INFO_FMT("Total %1 transfers will be resumed after reconnection", m_pengingResumes.size());
+        // Pending transfers will be resumed
     }
 
 }
@@ -122,11 +118,8 @@ void ReconnectTransferManager::scheduleResumeTransfers()
 void ReconnectTransferManager::resumeTransfers()
 {
     if(m_pengingResumes.isEmpty()){
-        LOG_INFO("No pending transfers to resume");
         return;
     }
-
-    LOG_INFO_FMT("Resuming %1 transfers", m_pengingResumes.size());
 
     // 发送恢复传输信号
     emit readyToResumeTransfer(m_pengingResumes);
@@ -136,23 +129,18 @@ void ReconnectTransferManager::resumeTransfers()
         // 检查传输状态
         TransferState state = TransferStateManager::instance().loadTransferState(resume.fileId);
         if(state.fileId.isEmpty()){
-            LOG_INFO_FMT("Transfer state not found for %1", resume.fileId);
             continue;
         }
 
         // 检查是否已经完成
         if(TransferStateManager::instance().isTransferComplete(resume.fileId)){
-            LOG_INFO_FMT("Transfer already completed: %1", resume.fileId);
             TransferStateManager::instance().removeTransferState(resume.fileId);
             continue;
         }
-
-        LOG_INFO_FMT("Resuming transfer: %1", resume.fileId);
 
         // 请求恢复传输
         emit requestResumeTransfer(resume.fileId, resume.friendId, resume.isSending);
     }
 
     m_pengingResumes.clear();
-    LOG_INFO("All pending transfers resumed");
 }

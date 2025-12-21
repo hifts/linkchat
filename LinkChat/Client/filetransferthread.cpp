@@ -1,6 +1,7 @@
 #include "filetransferthread.h"
 #include "logger.h"
 #include "transferstatemanager.h"
+#include "encryptionmanager.h"
 
 #include <QCryptographicHash>
 #include <QFile>
@@ -9,11 +10,13 @@
 FileTransferThread::FileTransferThread(const QString &filePath,
                                        const QString &fileId,
                                        int friendId,
+                                       int currentUserId,
                                        QObject *parent)
     : QThread(parent)
     , m_filePath(filePath)
     , m_fileId(fileId)
     , m_friendId(friendId)
+    , m_currentUserId(currentUserId)
     , m_chunkSize(64 * 1024)  // 默认64KB每片
     , m_stopped(false)
     , m_paused(false)
@@ -174,11 +177,33 @@ void FileTransferThread::run()
             break;
         }
 
+        // 加密文件分片（使用与该好友相同的聊天密钥）
+        QByteArray encryptedChunk;
+        QByteArray encryptionKey = EncryptionManager::instance().getCachedChatKey(m_currentUserId, m_friendId);
+        
+        if (encryptionKey.isEmpty()) {
+            LOG_ERROR(QString("[FileTransfer] Failed to get encryption key for users %1 and %2")
+                     .arg(m_currentUserId).arg(m_friendId));
+            emit transferFailed("无法获取加密密钥");
+            break;
+        }
+        
+        encryptedChunk = EncryptionManager::instance().xorEncryptDecrypt(chunk, encryptionKey);
+        
+        if (encryptedChunk.isEmpty()) {
+            LOG_ERROR(QString("[FileTransfer] Failed to encrypt chunk %1").arg(i));
+            emit transferFailed("文件分片加密失败");
+            break;
+        }
+        
+        LOG_DEBUG(QString("[FileTransfer] Chunk %1 encrypted: %2 bytes -> %3 bytes")
+                 .arg(i).arg(chunk.size()).arg(encryptedChunk.size()));
+
         totalSent += chunk.size();
         int percent = fileSize > 0 ? (totalSent * 100) / fileSize : 0;
 
-        // 发送分片信号（会自动跨线程传递到主线程）
-        emit chunkReady(chunk,i,totalChunks);
+        // 发送加密后的分片信号（会自动跨线程传递到主线程）
+        emit chunkReady(encryptedChunk,i,totalChunks);
 
         // 发送进度更新信号
         emit progressUpdated(percent,totalSent,fileSize);

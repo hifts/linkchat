@@ -17,7 +17,10 @@ public:
 
     // 业务接口
     bool handelRegister(const QString &user,const QString &pwd);
+    bool handelRegister(const QString &user, const QString &passwordHash, const QByteArray &salt);
     bool handleLogin(const QString &user,const QString &pwd,int & outUid);
+    bool handleLogin(const QString &user, const QString &pwd, int &outUid, 
+                    QByteArray &outSalt, QByteArray &outPasswordHash);
 
     // 根据用户id查询好友信息
     QList<FriendInfo> getFriendList(int uid);

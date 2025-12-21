@@ -93,8 +93,6 @@ void ReconnectManager::startReconnect()
 
     int delay = calculateNextDelay();
 
-    LOG_INFO(QString("将在 %1 秒后尝试第 %2 次重连").arg(delay / 1000.0,0,'f',1).arg(m_reconnectAttempts + 1));
-
     emit reconnectStateChanged(m_reconnectAttempts + 1,delay);
 
     // 启动重连定时器
@@ -116,7 +114,7 @@ void ReconnectManager::stopReconnect()
 void ReconnectManager::onReconnectSuccess()
 {
     if(m_reconnectAttempts > 0){
-        LOG_INFO_FMT("重连成功（尝试了 %1 次）",m_reconnectAttempts);
+        // Reconnection successful
     }
 
     m_reconnectAttempts = 0;
@@ -124,7 +122,6 @@ void ReconnectManager::onReconnectSuccess()
 
     // 如果有保存有登录信息，则发出自动登录信号
     if(hasLoginInfo()){
-        LOG_INFO("自动登录中...");
         emit needAutoLogin(m_savedUserName,m_savedPassword);
     }
 }
@@ -133,21 +130,18 @@ void ReconnectManager::setServerInfo(const QString &ip, uint16_t port)
 {
     m_serverIp = ip;
     m_serverPort = port;
-    LOG_INFO(QString("设置了服务器信息:ip = %1,port = %2").arg(ip).arg(port));
 }
 
 void ReconnectManager::saveLoginInfo(const QString &userName, const QString &password)
 {
     m_savedUserName = userName;
     m_savedPassword = password;
-    LOG_INFO_FMT("保存了用户登录信息:userName = %1,password = %2",userName,password);
 }
 
 void ReconnectManager::clearLoginInfo()
 {
     m_savedUserName.clear();
     m_savedPassword.clear();
-    LOG_INFO("用户登录信息已清除");
 }
 
 void ReconnectManager::doReconnect()
@@ -156,9 +150,6 @@ void ReconnectManager::doReconnect()
 
     // 重连次数增加1
     m_reconnectAttempts++;
-
-    QString msg = QString("尝试重连%1 : %2 (第%3次)").arg(m_serverIp).arg(m_serverPort).arg(m_reconnectAttempts);
-    LOG_INFO(msg);
 
     // 发送重连信号，通知NetworkManager执行
     emit needReconnect(m_serverIp,m_serverPort);
@@ -184,18 +175,14 @@ int ReconnectManager::calculateNextDelay()
 void ReconnectManager::setInitialDelay(int ms)
 {
     m_initialDelay = ms;
-    LOG_INFO_FMT("设置初始重连延迟为 %1 毫秒",ms);
 }
 
 void ReconnectManager::setMaxDelay(int ms)
 {
     m_maxDelay = ms;
-    LOG_INFO_FMT("设置最大重连延迟为 %1 毫秒",ms);
 }
 
 void ReconnectManager::setMaxAttempts(int count)
 {
     m_maxAttempts = count;
-    QString msg = QString("设置最大重连次数为 %1 %2").arg(count).arg(count == 0 ? "(无限制)" : "");
-    LOG_INFO(msg);
 }

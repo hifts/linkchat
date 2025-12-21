@@ -37,6 +37,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
     QString avatarPath = index.data(ChatModel::RoleAvatar).toString();
     bool isGroupChat = index.data(ChatModel::RoleIsGroupChat).toBool();
     QString senderName = index.data(ChatModel::RoleSenderName).toString();
+    int encryptionStatus = index.data(ChatModel::RoleEncryptionStatus).toInt();
 
     QRect rect = option.rect;
     int senderNameHeight = (isGroupChat && !isMine) ? 18 : 0; // 群聊非自己的消息显示发送者用户名
@@ -92,6 +93,27 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
         painter->setPen(Qt::black);
         QRect textDrawRect = contentRect.adjusted(m_bubblePadding, m_bubblePadding, -m_bubblePadding, -m_bubblePadding);
         painter->drawText(textDrawRect, Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignVCenter, text);
+        
+        // 绘制加密状态指示器（在气泡右下角）
+        if (encryptionStatus == 1) { // Encrypted
+            // 绘制小锁图标（使用Unicode字符）
+            QFont iconFont = option.font;
+            iconFont.setPointSize(8);
+            painter->setFont(iconFont);
+            painter->setPen(QColor(0x5865F2)); // 蓝色表示加密
+            QRect lockRect(contentRect.right() - 16, contentRect.bottom() - 14, 14, 12);
+            painter->drawText(lockRect, Qt::AlignCenter, "🔒");
+            painter->setFont(option.font);
+        } else if (encryptionStatus == 2) { // Unencrypted
+            // 绘制警告图标
+            QFont iconFont = option.font;
+            iconFont.setPointSize(8);
+            painter->setFont(iconFont);
+            painter->setPen(QColor(0xFAA61A)); // 橙色表示未加密
+            QRect warnRect(contentRect.right() - 16, contentRect.bottom() - 14, 14, 12);
+            painter->drawText(warnRect, Qt::AlignCenter, "⚠");
+            painter->setFont(option.font);
+        }
 
     } else if (msgType == TypeImage) {
         QByteArray raw = index.data(ChatModel::RoleImage).toByteArray();
@@ -119,6 +141,25 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
 
             QRect imgShowRect = bubbleRect.adjusted(5,5,-5,-5);
             painter->drawImage(imgShowRect, image,image.rect()); // 自动缩放
+            
+            // 绘制加密状态指示器（在图片右下角）
+            if (encryptionStatus == 1) { // Encrypted
+                QFont iconFont = option.font;
+                iconFont.setPointSize(8);
+                painter->setFont(iconFont);
+                painter->setPen(QColor(0x5865F2));
+                QRect lockRect(bubbleRect.right() - 20, bubbleRect.bottom() - 18, 14, 12);
+                painter->drawText(lockRect, Qt::AlignCenter, "🔒");
+                painter->setFont(option.font);
+            } else if (encryptionStatus == 2) { // Unencrypted
+                QFont iconFont = option.font;
+                iconFont.setPointSize(8);
+                painter->setFont(iconFont);
+                painter->setPen(QColor(0xFAA61A));
+                QRect warnRect(bubbleRect.right() - 20, bubbleRect.bottom() - 18, 14, 12);
+                painter->drawText(warnRect, Qt::AlignCenter, "⚠");
+                painter->setFont(option.font);
+            }
         }
     }
 

@@ -73,16 +73,44 @@ enum ChatSubType : char {
     SUB_FILE = 2
 };
 
+// 加密标记位（用于标识消息是否加密）
+// 将子类型与此标记进行OR运算来标识加密消息
+// 例如：SUB_TEXT | ENCRYPTED_FLAG = 0x80 表示加密的文本消息
+const char ENCRYPTED_FLAG = (char)0x80;
+
+// 辅助函数：检查子类型是否标记为加密
+inline bool isSubTypeEncrypted(char subType) {
+    return (subType & ENCRYPTED_FLAG) != 0;
+}
+
+// 辅助函数：获取原始子类型（去除加密标记）
+inline char getOriginalSubType(char subType) {
+    return subType & ~ENCRYPTED_FLAG;
+}
+
+// 辅助函数：添加加密标记到子类型
+inline char addEncryptedFlag(char subType) {
+    return subType | ENCRYPTED_FLAG;
+}
+
 // 心跳包结构
 struct HeartbeatPacket {
     uint64_t timestamp;     // 时间戳
 };
 
-// 登录/注册 请求包
+// 登录请求包
 struct LoginReq
 {
     char userName[32];      // 登录名
     char password[32];      // 登录密码
+};
+
+// 注册请求包
+struct RegisterReq
+{
+    char userName[32];      // 用户名
+    char passwordHash[64];  // Base64编码的密码哈希值
+    char salt[64];          // Base64编码的盐值
 };
 
 // 登录/注册 响应包

@@ -26,6 +26,9 @@ class FileTransferManager : public QObject
 public:
     static FileTransferManager &instance();
 
+    // 设置当前用户ID（用于加密）
+    void setCurrentUserId(int userId);
+
     // 开始发送文件
     QString startSendFile(const QString &fileId,const QString &filePath,int friendId);
 
@@ -72,6 +75,7 @@ private:
 
 
     QMap<QString,FileTransferInfo*> m_transfers;    // 存放文件传输信息包括传输线程类
+    int m_currentUserId;                             // 当前用户ID（用于加密）
 };
 
 #endif // FILETRANSFERMANAGER_H

@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "heartbeatmanager.h"
 #include "reconnectmanager.h"
+#include "filetransfermanager.h"
 
 #include <QApplication>
 #include <QTimer>
@@ -48,6 +49,13 @@ int main(int argc, char *argv[])
         MainWindow w;
         w.setCurrentUserId(loginDlg.loginUid());
         w.setCurrentUserName(loginDlg.loginUserName());
+        
+        // 设置网络管理器的当前用户ID（用于消息加密）
+        NetworkManager::instance().setCurrentUserId(loginDlg.loginUid());
+        
+        // 设置文件传输管理器的当前用户ID（用于文件加密）
+        FileTransferManager::instance().setCurrentUserId(loginDlg.loginUid());
+        
         w.show();
 
         return a.exec();

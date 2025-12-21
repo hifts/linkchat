@@ -35,6 +35,9 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
+    
+    // 重写关闭事件（清理敏感数据）
+    void closeEvent(QCloseEvent *event) override;
 
 private:
 

@@ -5,12 +5,14 @@
 #include "filereceiver.h"
 #include "groupdialog.h"
 #include "logger.h"
+#include "encryptionmanager.h"
 
 #include <QBuffer>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QTimer>
 #include <QButtonGroup>
+#include <QCloseEvent>
 
 MainWindow::MainWindow(QWidget *parent)
     : QWidget(parent)
@@ -63,6 +65,22 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // 清除密钥缓存
+    EncryptionManager::instance().clearKeyCache();
+    
+    // 主动断开连接（这也会清除密钥缓存，但为了安全起见再次调用）
+    if (NetworkManager::instance().isConnected()) {
+        NetworkManager::instance().disconnectFromServer();
+    }
+    
+    LOG_INFO("[MainWindow] Sensitive data cleared");
+    
+    // 接受关闭事件
+    event->accept();
 }
 
 void MainWindow::mousePressEvent(QMouseEvent *event)
@@ -666,6 +684,30 @@ void MainWindow::connectSignalsAndSlots()
     connect(&NetworkManager::instance(), &NetworkManager::sigGroupChatHistoryReceived, this, &MainWindow::onGroupChatHistoryReceived);
     connect(&NetworkManager::instance(), &NetworkManager::sigCreateGroupResult, this, &MainWindow::onCreateGroupResult);
     connect(&NetworkManager::instance(), &NetworkManager::sigInviteToGroupNotify, this, &MainWindow::onInviteToGroupNotify);
+    
+    // 关联加密错误信号
+    connect(&EncryptionManager::instance(), &EncryptionManager::keyGenerationError,
+            this, [this](int errorType, const QString& errorMessage) {
+                QString typeStr = (errorType == 1) ? "私聊密钥" : "群聊密钥";
+                QMessageBox::warning(this, "加密错误", 
+                    QString("%1生成失败：%2").arg(typeStr, errorMessage));
+                LOG_ERROR(QString("[MainWindow] Key generation error (type=%1): %2")
+                         .arg(errorType).arg(errorMessage));
+            });
+    
+    connect(&EncryptionManager::instance(), &EncryptionManager::encryptionOperationError,
+            this, [this](const QString& errorMessage) {
+                QMessageBox::warning(this, "加密错误", 
+                    QString("消息加密失败：%1").arg(errorMessage));
+                LOG_ERROR(QString("[MainWindow] Encryption operation error: %1").arg(errorMessage));
+            });
+    
+    connect(&EncryptionManager::instance(), &EncryptionManager::decryptionOperationError,
+            this, [this](const QString& errorMessage) {
+                QMessageBox::warning(this, "解密错误", 
+                    QString("消息解密失败：%1").arg(errorMessage));
+                LOG_ERROR(QString("[MainWindow] Decryption operation error: %1").arg(errorMessage));
+            });
 }
 
 void MainWindow::sendFriendResponse(int requesterId, bool accepted)
@@ -946,6 +988,31 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
     QByteArray realData = body.mid(1);
 
     if (subType == SUB_TEXT) {
+        // 检查解密是否失败（内容为空）
+        if (realData.isEmpty()) {
+            LOG_WARN_FMT("[MainWindow] Received message with empty content from user %1 - decryption may have failed", srcId);
+            QString errorText = "[消息解密失败]";
+            ChatMessage msg(errorText, false, ":/res/you.jpeg");
+            
+            if (m_currentFriendId == srcId) {
+                m_chatModel->addMessage(msg);
+                ui->chatList->scrollToBottom();
+            } else {
+                m_chatHistory[srcId].append(msg);
+                // 增加未读计数
+                for (int i = 0; i < ui->contactList->count(); ++i) {
+                    QListWidgetItem *item = ui->contactList->item(i);
+                    int uid = item->data(Qt::UserRole).toInt();
+                    if (uid == srcId) {
+                        int currentCount = item->data(Qt::UserRole + 2).toInt();
+                        item->setData(Qt::UserRole + 2, currentCount + 1);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        
         QString text = QString::fromUtf8(realData);
 
         ChatMessage msg(text, false, ":/res/you.jpeg"); // 对方头像
@@ -974,8 +1041,32 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
         }
 
     }else if (subType == SUB_IMAGE) {
-        QByteArray realImageData = body.mid(1);
-        ChatMessage msg(realImageData, false, ":/res/you.jpeg");
+        // 检查解密是否失败（内容为空）
+        if (realData.isEmpty()) {
+            LOG_WARN_FMT("[MainWindow] Received image with empty content from user %1 - decryption may have failed", srcId);
+            QString errorText = "[图片解密失败]";
+            ChatMessage msg(errorText, false, ":/res/you.jpeg");
+            
+            if (m_currentFriendId == srcId) {
+                m_chatModel->addMessage(msg);
+                ui->chatList->scrollToBottom();
+            } else {
+                m_chatHistory[srcId].append(msg);
+                // 增加未读计数
+                for (int i = 0; i < ui->contactList->count(); ++i) {
+                    QListWidgetItem *item = ui->contactList->item(i);
+                    int uid = item->data(Qt::UserRole).toInt();
+                    if (uid == srcId) {
+                        int currentCount = item->data(Qt::UserRole + 2).toInt();
+                        item->setData(Qt::UserRole + 2, currentCount + 1);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        
+        ChatMessage msg(realData, false, ":/res/you.jpeg");
         if (m_currentFriendId == srcId) {
             m_chatModel->addMessage(msg);
             ui->chatList->scrollToBottom();
@@ -1016,18 +1107,19 @@ void MainWindow::onSigChatHistoryReceived(int friendId, const QList<QPair<int, Q
         char msgType = rawBody[0];
 
         // 获取实际内容 (去掉第一个字节)
-        QByteArray realContent = rawBody.mid(1);
+        // 注意：NetworkManager 已经处理了解密，这里的内容已经是解密后的
+        QByteArray content = rawBody.mid(1);
 
         if (msgType == SUB_IMAGE) {
             // --- 图片处理 ---
             // 调用接收 QByteArray 的构造函数，这会将 type 设置为 TypeImage
-            ChatMessage msg(realContent, isMe, avatar);
+            ChatMessage msg(content, isMe, avatar);
             m_chatModel->addMessage(msg);
 
         } else {
             // --- 文本处理 ---
             // 调用接收 QString 的构造函数，这会将 type 设置为 TypeText
-            QString text = QString::fromUtf8(realContent);
+            QString text = QString::fromUtf8(content);
             ChatMessage msg(text, isMe, avatar);
             m_chatModel->addMessage(msg);
         }
@@ -1253,8 +1345,8 @@ void MainWindow::onSigFileTransferRequest(const QString &fileId, const QString &
     resp.accepted = (res == QMessageBox::Yes) ? 1 : 0;
 
     if(res == QMessageBox::Yes){
-        // 开始接收文件(支持断点续传)
-        FileReceiver::instance().startReceiving(fileId,fileName,fileSize);
+        // 开始接收文件(支持断点续传，传入发送者ID用于解密)
+        FileReceiver::instance().startReceiving(fileId,fileName,fileSize, senderId);
 
         // 记录活动传输
         ReconnectTransferManager::instance().saveActiveTransfer(fileId, fileName, senderId,false);
@@ -1358,7 +1450,7 @@ void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk,
     chunkHeader.chunkIndex = chunkIndex;
     chunkHeader.chunkSize = chunk.size();
 
-    // 组装包体：头部 + 实际数据
+    // 组装包体：头部 + 实际数据（已加密）
     QByteArray body;
     body.append((char*)&chunkHeader,sizeof(FileChunk));
     body.append(chunk);
@@ -1367,7 +1459,7 @@ void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk,
     NetworkManager::instance().sendRow(packet);
 
     if (chunkIndex % 10 == 0) {  // 每10个分片打印一次日志
-        LOG_INFO_FMT("Send chunk %1 / %2 for file",chunkIndex,totalChunks);
+        LOG_INFO_FMT("Send encrypted chunk %1 / %2 for file (size: %3 bytes)",chunkIndex,totalChunks,chunk.size());
     }
 }
 
@@ -1428,6 +1520,31 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
     QString avatar = isMe ? ":/res/me.jpg" : ":/res/you.jpeg";
 
     if (subType == SUB_TEXT) {
+        // 检查解密是否失败（内容为空）
+        if (realData.isEmpty()) {
+            LOG_WARN_FMT("[MainWindow] Received group message with empty content from group %1 - decryption may have failed", groupId);
+            QString errorText = "[群消息解密失败]";
+            ChatMessage msg(errorText, isMe, avatar, senderName);
+            
+            if (m_isGroupChat && m_currentGroupId == groupId) {
+                m_chatModel->addMessage(msg);
+                ui->chatList->scrollToBottom();
+            } else {
+                m_groupChatHistory[groupId].append(msg);
+                // 显示未读红点
+                for (int i = 0; i < ui->contactList->count(); ++i) {
+                    QListWidgetItem *item = ui->contactList->item(i);
+                    int itemId = item->data(ContactDelegate::RoleStatus).toInt();
+                    if (itemId < 0 && -itemId == groupId) {
+                        int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
+                        item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        
         QString text = QString::fromUtf8(realData);
         ChatMessage msg(text, isMe, avatar, senderName);
 
@@ -1453,6 +1570,31 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
             }
         }
     } else if (subType == SUB_IMAGE) {
+        // 检查解密是否失败（内容为空）
+        if (realData.isEmpty()) {
+            LOG_WARN_FMT("[MainWindow] Received group image with empty content from group %1 - decryption may have failed", groupId);
+            QString errorText = "[群图片解密失败]";
+            ChatMessage msg(errorText, isMe, avatar, senderName);
+            
+            if (m_isGroupChat && m_currentGroupId == groupId) {
+                m_chatModel->addMessage(msg);
+                ui->chatList->scrollToBottom();
+            } else {
+                m_groupChatHistory[groupId].append(msg);
+                // 显示未读红点
+                for (int i = 0; i < ui->contactList->count(); ++i) {
+                    QListWidgetItem *item = ui->contactList->item(i);
+                    int itemId = item->data(ContactDelegate::RoleStatus).toInt();
+                    if (itemId < 0 && -itemId == groupId) {
+                        int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
+                        item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        
         ChatMessage msg(realData, isMe, avatar, senderName);
 
         if (m_isGroupChat && m_currentGroupId == groupId) {
@@ -1492,6 +1634,19 @@ void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<
 
         char msgType = rawBody[0];
         QByteArray realContent = rawBody.mid(1);
+        
+        // 检查解密是否失败（内容为空）
+        if (realContent.isEmpty()) {
+            LOG_WARN_FMT("[MainWindow] Received group history with empty content from group %1 - decryption may have failed", groupId);
+            if (msgType == SUB_IMAGE) {
+                ChatMessage msg(QString("[历史群图片解密失败]"), isMe, avatar, senderName);
+                m_chatModel->addMessage(msg);
+            } else {
+                ChatMessage msg(QString("[历史群消息解密失败]"), isMe, avatar, senderName);
+                m_chatModel->addMessage(msg);
+            }
+            continue;
+        }
 
         if (msgType == SUB_IMAGE) {
             ChatMessage msg(realContent, isMe, avatar, senderName);
@@ -1760,20 +1915,43 @@ void MainWindow::on_btnSend_clicked()
 
     // 判断是群聊还是私聊
     if (m_isGroupChat && m_currentGroupId > 0) {
-        // 群聊发送
+        // 群聊发送 - 需要加密
         GroupChatMessage header;
         header.groupId = m_currentGroupId;
         header.senderId = m_currentUserId;
         strncpy(header.senderName, m_currentUserName.toUtf8().constData(), 31);
         header.senderName[31] = '\0';
 
+        // 获取或生成群聊密钥
+        QByteArray key = EncryptionManager::instance().getCachedGroupKey(m_currentGroupId);
+        
+        if (key.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to get group encryption key");
+            QMessageBox::warning(this, "发送失败", "无法生成群聊加密密钥");
+            return;
+        }
+        
+        // 对消息内容进行XOR加密
+        QByteArray plaintext = text.toUtf8();
+        QByteArray encrypted = EncryptionManager::instance().xorEncryptDecrypt(plaintext, key);
+        
+        if (encrypted.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to encrypt group message");
+            QMessageBox::warning(this, "发送失败", "群消息加密失败");
+            return;
+        }
+        
+        // 组装消息内容：带加密标记的子类型 + 加密后的内容
         QByteArray msgContent;
-        msgContent.append((char)SUB_TEXT);
-        msgContent.append(text.toUtf8());
+        msgContent.append(addEncryptedFlag(SUB_TEXT));
+        msgContent.append(encrypted);
 
         QByteArray body;
         body.append((char*)&header, sizeof(GroupChatMessage));
         body.append(msgContent);
+        
+        LOG_DEBUG(QString("[MainWindow] Sending encrypted group message to group %1 (plaintext: %2 bytes, encrypted: %3 bytes)")
+                 .arg(m_currentGroupId).arg(plaintext.size()).arg(encrypted.size()));
 
         NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_TEXT, body);
 
@@ -1781,10 +1959,34 @@ void MainWindow::on_btnSend_clicked()
         ChatMessage msg(text, true, ":/res/me.jpg", m_currentUserName);
         m_chatModel->addMessage(msg);
     } else if (m_currentFriendId > 0) {
-        // 私聊发送
+        // 私聊发送 - 需要加密
         QByteArray body;
-        body.append((char)SUB_TEXT);
-        body.append(text.toUtf8());
+        
+        // 获取或生成聊天密钥
+        QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, m_currentFriendId);
+        
+        if (key.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to get chat encryption key");
+            QMessageBox::warning(this, "发送失败", "无法生成加密密钥");
+            return;
+        }
+        
+        // 对消息内容进行XOR加密
+        QByteArray plaintext = text.toUtf8();
+        QByteArray encrypted = EncryptionManager::instance().xorEncryptDecrypt(plaintext, key);
+        
+        if (encrypted.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to encrypt message");
+            QMessageBox::warning(this, "发送失败", "消息加密失败");
+            return;
+        }
+        
+        // 使用带加密标记的子类型
+        body.append(addEncryptedFlag(SUB_TEXT));
+        body.append(encrypted);
+        
+        LOG_DEBUG(QString("[MainWindow] Sending encrypted message to user %1 (plaintext: %2 bytes, encrypted: %3 bytes)")
+                 .arg(m_currentFriendId).arg(plaintext.size()).arg(encrypted.size()));
 
         QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
         NetworkManager::instance().sendRow(packet);
@@ -1802,6 +2004,9 @@ void MainWindow::on_btnSend_clicked()
 void MainWindow::setCurrentUserId(int newCurrentUserId)
 {
     m_currentUserId = newCurrentUserId;
+    
+    // 同时设置FileReceiver的当前用户ID（用于文件解密）
+    FileReceiver::instance().setCurrentUserId(newCurrentUserId);
 }
 
 void MainWindow::setCurrentUserName(const QString &name)
@@ -1860,20 +2065,42 @@ void MainWindow::on_btnImage_clicked()
 
     // 判断是群聊还是私聊
     if (m_isGroupChat && m_currentGroupId > 0) {
-        // 群聊发送图片
+        // 群聊发送图片 - 需要加密
         GroupChatMessage header;
         header.groupId = m_currentGroupId;
         header.senderId = m_currentUserId;
         strncpy(header.senderName, m_currentUserName.toUtf8().constData(), 31);
         header.senderName[31] = '\0';
 
+        // 获取或生成群聊密钥
+        QByteArray key = EncryptionManager::instance().getCachedGroupKey(m_currentGroupId);
+        
+        if (key.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to get group encryption key for image");
+            QMessageBox::warning(this, "发送失败", "无法生成群聊加密密钥");
+            return;
+        }
+        
+        // 对图片数据进行XOR加密
+        QByteArray encrypted = EncryptionManager::instance().xorEncryptDecrypt(imageData, key);
+        
+        if (encrypted.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to encrypt group image");
+            QMessageBox::warning(this, "发送失败", "群图片加密失败");
+            return;
+        }
+        
+        // 组装消息内容：带加密标记的子类型 + 加密后的内容
         QByteArray msgContent;
-        msgContent.append((char)SUB_IMAGE);
-        msgContent.append(imageData);
+        msgContent.append(addEncryptedFlag(SUB_IMAGE));
+        msgContent.append(encrypted);
 
         QByteArray body;
         body.append((char*)&header, sizeof(GroupChatMessage));
         body.append(msgContent);
+        
+        LOG_DEBUG(QString("[MainWindow] Sending encrypted group image to group %1 (plaintext: %2 bytes, encrypted: %3 bytes)")
+                 .arg(m_currentGroupId).arg(imageData.size()).arg(encrypted.size()));
 
         NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_TEXT, body);
 
@@ -1881,15 +2108,38 @@ void MainWindow::on_btnImage_clicked()
         ChatMessage msg(imageData, true, ":/res/me.jpg", m_currentUserName);
         m_chatModel->addMessage(msg);
     } else if (m_currentFriendId > 0) {
-        // 私聊发送图片
+        // 私聊发送图片 - 需要加密
         QByteArray body;
-        body.append((char)SUB_IMAGE);
-        body.append(imageData);
+        
+        // 获取或生成聊天密钥
+        QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, m_currentFriendId);
+        
+        if (key.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to get chat encryption key for image");
+            QMessageBox::warning(this, "发送失败", "无法生成加密密钥");
+            return;
+        }
+        
+        // 对图片数据进行XOR加密
+        QByteArray encrypted = EncryptionManager::instance().xorEncryptDecrypt(imageData, key);
+        
+        if (encrypted.isEmpty()) {
+            LOG_ERROR("[MainWindow] Failed to encrypt image");
+            QMessageBox::warning(this, "发送失败", "图片加密失败");
+            return;
+        }
+        
+        // 使用带加密标记的子类型
+        body.append(addEncryptedFlag(SUB_IMAGE));
+        body.append(encrypted);
+        
+        LOG_DEBUG(QString("[MainWindow] Sending encrypted image to user %1 (plaintext: %2 bytes, encrypted: %3 bytes)")
+                 .arg(m_currentFriendId).arg(imageData.size()).arg(encrypted.size()));
 
         QByteArray packet = makePacket(MSG_CHAT_TEXT, body, 0, m_currentFriendId);
         NetworkManager::instance().sendRow(packet);
 
-        // 本地立即显示
+        // 本地立即显示（显示原始未加密的图片）
         ChatMessage msg(imageData, true, ":/res/me.jpg");
         m_chatModel->addMessage(msg);
     } else {

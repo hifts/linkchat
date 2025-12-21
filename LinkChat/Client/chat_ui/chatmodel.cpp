@@ -36,6 +36,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         return msg.senderName;
     case RoleIsGroupChat:
         return msg.isGroupChat;
+    case RoleEncryptionStatus:
+        return msg.encryptionStatus;
     default:
         return QVariant();
     }

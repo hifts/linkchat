@@ -4,6 +4,7 @@
 #include "packet.h"
 #include "heartbeatmanager.h"
 #include "reconnectmanager.h"
+#include "encryptionmanager.h"
 
 #include <QObject>
 #include <QTcpSocket>
@@ -40,6 +41,9 @@ public:
 
     HeartbeatManager* getHeartbeatManager() { return m_heartbeatManager; }
     ReconnectManager* getReconnectManager() { return m_reconnectManager; }
+
+    // 设置当前用户ID（用于加密）
+    void setCurrentUserId(int userId) { m_currentUserId = userId; }
 
 private:
     explicit NetworkManager(QObject *parent = nullptr);
@@ -128,7 +132,7 @@ public:
 
     // 发送文件校验请求
     void requestFileVerify(const QString &fileId, const QString &fileMD5, int friendId);
-
+    
 private:
     QTcpSocket *m_socket;
     QByteArray m_buffer;        // 同样需要缓冲区处理粘包
@@ -136,6 +140,9 @@ private:
     // 心跳包和重连管理器
     HeartbeatManager *m_heartbeatManager;
     ReconnectManager *m_reconnectManager;
+    
+    // 当前用户ID（用于消息加密）
+    int m_currentUserId = 0;
 };
 
 #endif // NETWORKMANAGER_H

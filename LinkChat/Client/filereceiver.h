@@ -21,6 +21,8 @@ struct ReceivingFileInfo {
     int receivedChunks = 0;             // 接收到第几片
     QFile *file = nullptr;
     QMap<int, bool> receivedChunkMap;   // 记录已接收的分片
+    int senderId = 0;                   // 发送者ID（用于解密）
+    QString expectedMD5;                // 期望的MD5值（用于验证）
 };
 
 class FileReceiver : public QObject
@@ -29,8 +31,11 @@ class FileReceiver : public QObject
 public:
     static FileReceiver &instance();
 
+    // 设置当前用户ID（用于解密）
+    void setCurrentUserId(int userId) { m_currentUserId = userId; }
+
     // 开始接收文件
-    bool startReceiving(const QString &fileId, const QString &fileName, qint64 fileSize);
+    bool startReceiving(const QString &fileId, const QString &fileName, qint64 fileSize, int senderId = 0, const QString &expectedMD5 = QString());
 
     // 接收分片数据
     bool receiveChunk(const QString &fileId,int chunkIndex,const QByteArray &data);
@@ -57,6 +62,7 @@ private:
 
     QMap<QString, ReceivingFileInfo*> m_receivingFiles;
     QMutex m_mutex;     // 保护并发访问
+    int m_currentUserId = 0;  // 当前用户ID（用于解密）
 signals:
 
     // 接收进度信号

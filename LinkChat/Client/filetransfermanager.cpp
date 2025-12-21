@@ -18,6 +18,7 @@ FileTransferManager &FileTransferManager::instance()
 
 FileTransferManager::FileTransferManager(QObject *parent)
     : QObject{parent}
+    , m_currentUserId(0)
 {}
 
 FileTransferManager::~FileTransferManager()
@@ -42,6 +43,12 @@ QString FileTransferManager::generateFileId(const QString &filePath)
     return QString(hash.toHex());
 }
 
+void FileTransferManager::setCurrentUserId(int userId)
+{
+    m_currentUserId = userId;
+    LOG_INFO_FMT("FileTransferManager: Current user ID set to %1", userId);
+}
+
 QString FileTransferManager::startSendFile(const QString &fileId,const QString &filePath, int friendId)
 {
     QFileInfo fileInfo(filePath);
@@ -63,7 +70,7 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
     info->friendId = friendId;
     info->isReceiving = false;
     info->progress = 0;
-    info->thread = new FileTransferThread(filePath,fileId,friendId,this);
+    info->thread = new FileTransferThread(filePath,fileId,friendId,m_currentUserId,this);
 
     // 检查是否有已保存的传输状态（断点续传）
     TransferState savedState = TransferStateManager::instance().loadTransferState(fileId);
