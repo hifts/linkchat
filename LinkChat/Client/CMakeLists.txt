@@ -17,7 +17,22 @@ set(PROJECT_SOURCES
     main.cpp
     networkmanager.h
     networkmanager.cpp
-    # 添加你的其他源文件...
+    logindialog.h logindialog.cpp logindialog.ui
+    registerdialog.h registerdialog.cpp registerdialog.ui
+    mainwindow.h mainwindow.cpp mainwindow.ui
+    chat_ui/ChatData.h
+    chat_ui/chatmodel.h chat_ui/chatmodel.cpp
+    chat_ui/chatdelegate.h chat_ui/chatdelegate.cpp
+    res.qrc
+    chat_ui/contactdelegate.h chat_ui/contactdelegate.cpp
+    filetransferthread.h filetransferthread.cpp
+    filetransfermanager.h filetransfermanager.cpp
+    filereceiver.h filereceiver.cpp
+    groupdialog.h groupdialog.cpp groupdialog.ui
+    heartbeatmanager.h heartbeatmanager.cpp
+    reconnectmanager.h reconnectmanager.cpp
+    transferstatemanager.h transferstatemanager.cpp
+    reconnecttransfermanager.h reconnecttransfermanager.cpp
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -26,59 +41,16 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         ${PROJECT_SOURCES}
     )
 else()
-    find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt5 REQUIRED COMPONENTS Core)
-
-    add_executable(Client
-        ${PROJECT_SOURCES}
-        logindialog.h logindialog.cpp logindialog.ui
-        registerdialog.h registerdialog.cpp registerdialog.ui
-        mainwindow.h mainwindow.cpp mainwindow.ui
-        chat_ui/ChatData.h
-        chat_ui/chatmodel.h chat_ui/chatmodel.cpp
-        chat_ui/chatdelegate.h chat_ui/chatdelegate.cpp
-        res.qrc
-        chat_ui/contactdelegate.h chat_ui/contactdelegate.cpp
-        filetransferthread.h filetransferthread.cpp
-        filetransfermanager.h filetransfermanager.cpp
-        filereceiver.h filereceiver.cpp
-        groupdialog.h groupdialog.cpp groupdialog.ui
-        heartbeatmanager.h heartbeatmanager.cpp
-        reconnectmanager.h reconnectmanager.cpp
-        transferstatemanager.h transferstatemanager.cpp
-        reconnecttransfermanager.h reconnecttransfermanager.cpp
-
-
-    )
+    add_executable(Client ${PROJECT_SOURCES})
 endif()
 
-# 正确链接所有必要的模块
+# 链接模块
 target_link_libraries(Client PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network
     Qt${QT_VERSION_MAJOR}::Core
     LinkChatCommon              # 连接common里的协议
 )
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
-target_link_libraries(Client PRIVATE Qt5::Core)
 
 target_include_directories(Client PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/chat_ui)
 

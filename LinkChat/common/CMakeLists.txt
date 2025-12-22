@@ -10,12 +10,19 @@ project(LinkChatCommon)
 # 注意：指令中间必须是下划线 add_library，不能是空格
 find_package(Qt5 REQUIRED COMPONENTS Core)
 
+# 添加资源文件
+qt5_add_resources(COMMON_RESOURCES config/config.qrc)
+
 add_library(LinkChatCommon STATIC
     packet.h
     packet.cpp
     logger.h
     encryptionmanager.h
     encryptionmanager.cpp
+    configmanager.h
+    configmanager.cpp
+    configkeys.h
+    ${COMMON_RESOURCES}
 )
 
 target_link_libraries(LinkChatCommon PRIVATE Qt5::Core)

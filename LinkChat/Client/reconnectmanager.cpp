@@ -1,18 +1,34 @@
 #include "reconnectmanager.h"
 #include "logger.h"
+#include "configmanager.h"
+#include "configkeys.h"
 
 #include <QtMath>
 
 ReconnectManager::ReconnectManager(QObject *parent)
     : QObject{parent}
     ,m_state(Disconnected)
-    ,m_autoReconnect(true)
     ,m_reconnectAttempts(0)
     ,m_serverPort(0)
-    ,m_initialDelay(5000)
-    ,m_maxDelay(30000)
-    ,m_maxAttempts(0)
 {
+    // 从 ConfigManager 读取重连参数
+    m_autoReconnect = ConfigManager::instance().getBool(
+        ConfigKeys::Client::AUTO_RECONNECT, true);
+    
+    m_maxAttempts = ConfigManager::instance().getInt(
+        ConfigKeys::Client::RECONNECT_MAX_ATTEMPTS, 5);
+    
+    m_initialDelay = ConfigManager::instance().getInt(
+        ConfigKeys::Client::RECONNECT_INTERVAL, 5000);
+    
+    // 设置最大延迟为初始延迟的 6 倍（指数退避算法）
+    m_maxDelay = m_initialDelay * 6;
+    
+    LOG_INFO(QString("重连管理器初始化: 自动重连=%1, 最大尝试次数=%2, 初始延迟=%3ms")
+        .arg(m_autoReconnect ? "启用" : "禁用")
+        .arg(m_maxAttempts)
+        .arg(m_initialDelay));
+    
     m_reconnectTimer = new QTimer(this);
     m_reconnectTimer->setSingleShot(true);
     connect(m_reconnectTimer,&QTimer::timeout,this,&ReconnectManager::doReconnect);

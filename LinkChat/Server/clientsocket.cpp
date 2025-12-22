@@ -20,7 +20,6 @@ ClientSocket::ClientSocket(QObject *parent)
             notifyFriends(0);
         }
     });
-
 }
 
 void ClientSocket::onReadyRead()
@@ -50,7 +49,7 @@ void ClientSocket::onReadyRead()
             break;
         }
         case MSG_REGISTER_REQ:{
-            // 解包注册请求（使用新的RegisterReq结构）
+            // 解包注册请求
             RegisterReq *req = (RegisterReq*)bodyData.data();
 
             // 注意：客户端已经发送了Base64编码的passwordHash和salt
@@ -62,8 +61,7 @@ void ClientSocket::onReadyRead()
             qDebug() << "[Server] Password hash length:" << passwordHashBase64.length() 
                      << "Salt length:" << saltBase64.length();
 
-            // 使用新版本的handelRegister，直接传递Base64字符串
-            // 但是函数期望的是QByteArray salt，所以需要先解码
+            // 需要先解码
             QByteArray salt = QByteArray::fromBase64(saltBase64.toUtf8());
             
             bool ok = DBManager::instance().handelRegister(

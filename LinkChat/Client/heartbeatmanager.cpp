@@ -1,5 +1,7 @@
 #include "heartbeatmanager.h"
 #include "logger.h"
+#include "../common/configmanager.h"
+#include "../common/configkeys.h"
 
 HeartbeatManager::HeartbeatManager(QObject *parent)
     : QObject{parent}
@@ -9,6 +11,15 @@ HeartbeatManager::HeartbeatManager(QObject *parent)
     ,m_heartbeatTimeout(15000),
     m_maxMissedHeartbeats(3)
 {
+    // 从 ConfigManager 读取心跳间隔和超时时间
+    m_heartbeatInterval = ConfigManager::instance().getInt(
+        ConfigKeys::Client::HEARTBEAT_INTERVAL, 5000);
+    m_heartbeatTimeout = ConfigManager::instance().getInt(
+        ConfigKeys::Client::HEARTBEAT_TIMEOUT, 15000);
+    
+    LOG_INFO_FMT("HeartbeatManager initialized with interval=%1ms, timeout=%2ms", 
+                 m_heartbeatInterval, m_heartbeatTimeout);
+    
     // 初始化心跳发送定时器
     m_heartbeatTimer = new QTimer(this);
     m_heartbeatTimer->setInterval(m_heartbeatInterval);
@@ -18,6 +29,10 @@ HeartbeatManager::HeartbeatManager(QObject *parent)
     m_timeoutCheckTimer = new QTimer(this);
     m_timeoutCheckTimer->setInterval(m_heartbeatTimeout);
     connect(m_timeoutCheckTimer,&QTimer::timeout,this,&HeartbeatManager::onCheckTimeout);
+    
+    // 订阅 ConfigManager 的配置变更信号以支持热加载
+    connect(&ConfigManager::instance(), &ConfigManager::configChanged,
+            this, &HeartbeatManager::onConfigChanged);
 }
 
 void HeartbeatManager::start()
@@ -118,4 +133,27 @@ void HeartbeatManager::setHeartbeatTimeout(int ms)
 void HeartbeatManager::setMaxMissedHeartbeats(int newMaxMissedHeartbeats)
 {
     m_maxMissedHeartbeats = newMaxMissedHeartbeats;
+}
+
+void HeartbeatManager::onConfigChanged(const QString& key)
+{
+    // 检查是否是心跳相关的配置变更
+    if (key == ConfigKeys::Client::HEARTBEAT_INTERVAL) {
+        int newInterval = ConfigManager::instance().getInt(
+            ConfigKeys::Client::HEARTBEAT_INTERVAL, 5000);
+        
+        if (newInterval != m_heartbeatInterval) {
+            setHeartbeatInterval(newInterval);
+            LOG_INFO_FMT("心跳间隔已更新为%1毫秒（配置热加载）", newInterval);
+        }
+    }
+    else if (key == ConfigKeys::Client::HEARTBEAT_TIMEOUT) {
+        int newTimeout = ConfigManager::instance().getInt(
+            ConfigKeys::Client::HEARTBEAT_TIMEOUT, 15000);
+        
+        if (newTimeout != m_heartbeatTimeout) {
+            setHeartbeatTimeout(newTimeout);
+            LOG_INFO_FMT("心跳超时已更新为%1毫秒（配置热加载）", newTimeout);
+        }
+    }
 }

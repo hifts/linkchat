@@ -117,6 +117,20 @@ public:
         instance().m_minLevel = level;
     }
 
+    /**
+     * @brief 将字符串转换为日志级别
+     * @param levelStr 日志级别字符串（DEBUG/INFO/WARNING/ERROR，不区分大小写）
+     * @return Level 对应的日志级别，无效字符串返回 INFO
+     */
+    static Level stringToLevel(const QString& levelStr) {
+        QString upper = levelStr.toUpper();
+        if (upper == "DEBUG") return DEBUG;
+        if (upper == "INFO") return INFO;
+        if (upper == "WARN" || upper == "WARNING") return WARN;
+        if (upper == "ERROR") return ERROR;
+        return INFO; // 默认返回 INFO
+    }
+
 private:
     Logger() : m_initialized(false), m_minLevel(DEBUG) {}
     

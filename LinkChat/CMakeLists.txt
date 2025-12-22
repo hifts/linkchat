@@ -14,11 +14,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# 【关键点】设置输出目录
+# 设置输出目录
 # 让编译出来的 Server.exe 和 Client.exe 都跑到同一个 bin 目录下，方便调试
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# 【关键点】添加子目录
+# 添加子目录
 # 顺序很重要：common 被别人依赖，所以要先加
 add_subdirectory(common)
 add_subdirectory(Server)

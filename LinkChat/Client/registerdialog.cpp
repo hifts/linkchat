@@ -16,16 +16,13 @@ RegisterDialog::RegisterDialog(QWidget *parent)
 
     connect(&NetworkManager::instance(),&NetworkManager::sigRegisterResult,this,&RegisterDialog::onSigRegisterResult);
 
-    // 1. 窗口属性：无边框 + 透明
     this->setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
     this->setAttribute(Qt::WA_TranslucentBackground);
 
-    // 2. 确保对象名匹配 (防止 Designer 里名字不对)
     ui->frame->setObjectName("RegisterFrame");
     ui->btnOk->setObjectName("btnOk");
     ui->btnCancel->setObjectName("btnCancel");
 
-    // 3. 应用 QSS (直接复用 Login 的高级渐变)
     QString style = R"(
     /* 整体背景：保持与登录窗口一致的蓝紫渐变 */
     QDialog {
@@ -49,7 +46,7 @@ RegisterDialog::RegisterDialog(QWidget *parent)
         margin-bottom: 10px;
     }
 
-    /* 输入框 (3个都生效) */
+    /* 输入框 */
     QLineEdit {
         background-color: rgba(255, 255, 255, 0.1);
         border: none;
@@ -65,7 +62,7 @@ RegisterDialog::RegisterDialog(QWidget *parent)
     }
     QLineEdit::placeholder { color: #aaaaaa; }
 
-    /* 确认注册按钮 (主按钮) */
+    /* 确认注册按钮 */
     QPushButton#btnOk {
         background-color: #27ae60; /* 注册用绿色，或者用 #3498db 蓝色也可以 */
         color: white;
@@ -79,7 +76,7 @@ RegisterDialog::RegisterDialog(QWidget *parent)
     QPushButton#btnOk:hover { background-color: #2ecc71; }
     QPushButton#btnOk:pressed { background-color: #219150; padding-top: 10px; }
 
-    /* 取消/返回按钮 (文字链接风格) */
+    /* 取消/返回按钮 */
     QPushButton#btnCancel {
         background: transparent;
         color: #dddddd;
@@ -105,7 +102,6 @@ RegisterDialog::RegisterDialog(QWidget *parent)
 )";
 
     this->setStyleSheet(style);
-
 }
 
 RegisterDialog::~RegisterDialog()
@@ -129,12 +125,10 @@ void RegisterDialog::mouseMoveEvent(QMouseEvent *event)
     }
 }
 
-
 void RegisterDialog::on_btnCancel_clicked()
 {
     this->reject();
 }
-
 
 void RegisterDialog::on_btnOk_clicked()
 {
@@ -168,7 +162,7 @@ void RegisterDialog::on_btnOk_clicked()
         return;
     }
     
-    // 打包注册请求（使用新的RegisterReq结构）
+    // 打包注册请求
     RegisterReq req;
     memset(&req, 0, sizeof(RegisterReq));
     

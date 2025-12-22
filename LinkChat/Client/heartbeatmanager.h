@@ -47,6 +47,9 @@ private slots:
     // 心跳超时检查
     void onCheckTimeout();
 
+    // 配置变更处理
+    void onConfigChanged(const QString& key);
+
 signals:
     // 需要发送心跳包
     void needSendHeartbeat();

@@ -135,13 +135,12 @@ bool DBManager::handleLogin(const QString &user, const QString &pwd, int &outUid
     QString storedPasswordHash = query.value(1).toString();
     QString saltBase64 = query.value(2).toString();
 
-    // 检查盐值是否存在（新系统要求所有用户都有盐值）
+    // 检查盐值是否存在
     if (saltBase64.isNull() || saltBase64.isEmpty()) {
         qWarning() << "[DB] User has no salt value, login denied";
         return false;
     }
 
-    // 新用户：使用加密验证
     // 解码盐值
     QByteArray salt = QByteArray::fromBase64(saltBase64.toUtf8());
     if (salt.isEmpty()) {

@@ -1,0 +1,30 @@
+{
+  "server": {
+    "port": 8080,
+    "max_connections": 1000,
+    "heartbeat_interval": 30000,
+    "heartbeat_timeout": 90000,
+    "database": {
+      "host": "localhost",
+      "port": 3306,
+      "username": "root",
+      "password": "",
+      "database": "linkchat"
+    },
+    "log": {
+      "level": "INFO",
+      "file_path": "server.log"
+    }
+  },
+  "client": {
+    "server_address": "127.0.0.1",
+    "server_port": 8080,
+    "auto_reconnect": true,
+    "reconnect_max_attempts": 5,
+    "reconnect_interval": 3000,
+    "heartbeat_interval": 30000,
+    "heartbeat_timeout": 90000,
+    "file_save_path": "./downloads",
+    "language": "zh_CN"
+  }
+}

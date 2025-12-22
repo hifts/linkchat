@@ -15,7 +15,7 @@ LoginDialog::LoginDialog(QWidget *parent)
 
     connect(&NetworkManager::instance(),&NetworkManager::sigLoginResult,this,&LoginDialog::onSigLoginResult);
 
-    // 给控件起名（为了防止样式冲突，确保你在 Designer 里也是这些名字）
+    // 给控件起名
     ui->lblTitle->setObjectName("lblTitle");
     ui->btnClose->setObjectName("btnClose");
     ui->btnLogin->setObjectName("btnLogin");
@@ -27,19 +27,19 @@ LoginDialog::LoginDialog(QWidget *parent)
 
 
     QString style = R"(
-    /* 1. 整体窗口背景：搞一个高级的蓝紫渐变色，不用找图了 */
+    /* 整体窗口背景：蓝紫渐变色 */
     QDialog {
         background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #2c3e50, stop:1 #4ca1af);
     }
 
-    /* 2. 中间卡片：磨砂玻璃质感 */
+    /* 中间卡片：磨砂玻璃质感 */
     QFrame#LoginFrame {
         background-color: rgba(0, 0, 0, 0.6); /* 纯黑背景，60%透明度 */
         border-radius: 15px;
         border: 1px solid rgba(255, 255, 255, 0.1); /* 微微的白边，增加立体感 */
     }
 
-    /* 3. 标题 LinkChat：核心整容 */
+    /* 标题 */
     QLabel#lblTitle {
         font-family: "Microsoft YaHei", "Segoe UI", sans-serif; /* 强制使用无衬线现代字体 */
         font-size: 28px;       /* 字号适中 */
@@ -50,7 +50,7 @@ LoginDialog::LoginDialog(QWidget *parent)
         letter-spacing: 2px;   /* 字间距拉开一点点，显得高级 */
     }
 
-    /* 4. 输入框：极简风格 */
+    /*  输入框 */
     QLineEdit {
         background-color: rgba(255, 255, 255, 0.1); /* 微微发白的背景 */
         border: none;
@@ -65,12 +65,12 @@ LoginDialog::LoginDialog(QWidget *parent)
         background-color: rgba(255, 255, 255, 0.2); /* 选中时稍微亮一点 */
         border: 1px solid #3498db; /* 出现蓝色细边框 */
     }
-    /* 输入框里的提示文字颜色 (Placeholder) */
+    /* 输入框里的提示文字颜色 */
     QLineEdit::placeholder {
         color: #aaaaaa;
     }
 
-    /* 5. 登录按钮：去掉了丑陋的虚线框 */
+    /* 登录按钮 */
     QPushButton#btnLogin {
         background-color: #3498db;
         color: white;
@@ -80,7 +80,7 @@ LoginDialog::LoginDialog(QWidget *parent)
         font-weight: bold;
         padding: 8px;
         border: none;
-        outline: none; /* 【关键】去掉点击时的虚线框 */
+        outline: none;
     }
     QPushButton#btnLogin:hover {
         background-color: #5dade2;
@@ -91,7 +91,7 @@ LoginDialog::LoginDialog(QWidget *parent)
         padding-bottom: 6px;
     }
 
-    /* 6. 注册按钮：文字链接风 */
+    /* 注册按钮 */
     QPushButton#btnReg {
         background: transparent;
         color: #dddddd;
@@ -104,7 +104,7 @@ LoginDialog::LoginDialog(QWidget *parent)
         text-decoration: underline;
     }
 
-    /* 7. 关闭按钮：放在右上角的 X */
+    /* 关闭按钮 */
     QPushButton#btnClose {
         color: rgba(255, 255, 255, 0.7);
         background: transparent;
@@ -119,7 +119,6 @@ LoginDialog::LoginDialog(QWidget *parent)
 )";
 
     this->setStyleSheet(style);
-
 }
 
 LoginDialog::~LoginDialog()

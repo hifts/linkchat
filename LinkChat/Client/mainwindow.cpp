@@ -2024,7 +2024,6 @@ void MainWindow::on_btnContact_clicked()
     }
 }
 
-
 void MainWindow::on_btnNewFriends_clicked()
 {
     if(ui->stackedWidget->currentIndex() != 1){
@@ -2032,7 +2031,6 @@ void MainWindow::on_btnNewFriends_clicked()
         updateNewFriendsPage();
     }
 }
-
 
 void MainWindow::on_btnImage_clicked()
 {
@@ -2053,7 +2051,7 @@ void MainWindow::on_btnImage_clicked()
         return;
     }
 
-    // 限制大小（可选（比如压缩到 800px 宽）
+    // 限制大小
     if (image.width() > 800) {
         image = image.scaledToWidth(800, Qt::SmoothTransformation);
     }
