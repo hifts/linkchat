@@ -299,10 +299,12 @@ void NetworkManager::onReadyRead()
             quint32 count;
             in >> count;
 
-            QList<QPair<int,QByteArray>> history;
+            QList<std::tuple<int, QByteArray, quint64>> history;
             for (quint32 i = 0; i < count; ++i) {
-                quint32 senderId, len;
-                in >> senderId >> len;
+                quint32 senderId;
+                quint64 timestamp;
+                quint32 len;
+                in >> senderId >> timestamp >> len;
                 QByteArray content = body.mid(in.device()->pos(), len);
                 in.device()->seek(in.device()->pos() + len);
                 
@@ -347,7 +349,7 @@ void NetworkManager::onReadyRead()
                     decryptedContent = content;
                 }
                 
-                history.append(qMakePair((int)senderId, decryptedContent));
+                history.append(std::make_tuple((int)senderId, decryptedContent, timestamp));
             }
             emit sigChatHistoryReceived(header->src_id, history);
             break;
@@ -547,10 +549,11 @@ void NetworkManager::onReadyRead()
             quint32 groupId, count;
             in >> groupId >> count;
 
-            QList<std::tuple<int, QString, QByteArray>> history;
+            QList<std::tuple<int, QString, QByteArray, quint64>> history;
             for (quint32 i = 0; i < count; ++i) {
                 quint32 senderId, nameLen, contentLen;
-                in >> senderId >> nameLen;
+                quint64 timestamp;
+                in >> senderId >> timestamp >> nameLen;
 
                 QByteArray nameBytes(nameLen, '\0');
                 in.readRawData(nameBytes.data(), nameLen);
@@ -601,7 +604,7 @@ void NetworkManager::onReadyRead()
                     decryptedContent = content;
                 }
 
-                history.append(std::make_tuple((int)senderId, senderName, decryptedContent));
+                history.append(std::make_tuple((int)senderId, senderName, decryptedContent, timestamp));
             }
             emit sigGroupChatHistoryReceived(groupId, history);
             break;

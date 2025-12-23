@@ -77,6 +77,12 @@ private:
 
     // 检查未完成的传输任务
     void checkIncompleteTransfers();
+    
+    // 更新好友列表中的最后消息时间
+    void updateContactLastMsgTime(int friendId, const QDateTime &time);
+    
+    // 更新好友列表的显示模式（会话/好友）
+    void updateContactListMode(bool isSessionMode);
 
 private slots:
     // 处理收到的好友列表信号
@@ -91,7 +97,7 @@ private slots:
     // 处理收到好友的信息信号
     void onSigMsgReceived(uint32_t srcId,QByteArray body);
 
-    void onSigChatHistoryReceived(int friendId, const QList<QPair<int,QByteArray>>& history);
+    void onSigChatHistoryReceived(int friendId, const QList<std::tuple<int, QByteArray, quint64>>& history);
 
     // 处理好友状态改变信息
     void onSigFriendStatusChanged(int uid, int status);
@@ -150,7 +156,7 @@ private slots:
     // 处理群聊信号
     void onGroupListReceived(QList<GroupInfo> list);
     void onGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body);
-    void onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray>>& history);
+    void onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray, quint64>>& history);
     void onCreateGroupResult(bool success, int groupId);
     void onInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
 
@@ -168,6 +174,8 @@ private slots:
     void onFileResumeResp(const QString &fileId, bool canResume, int totalChunks, int receivedChunks, const QByteArray &bitmap);
 
     void on_btnSend_clicked();
+
+    void on_btnChat_clicked();
 
     void on_btnContact_clicked();
 
@@ -199,6 +207,9 @@ private:
 
     // Key是好友ID，Value是聊天记录列表
     QMap<int,QList<ChatMessage>> m_chatHistory;
+    
+    // Key是好友ID，Value是最后一条消息的时间
+    QMap<int, QDateTime> m_lastMsgTime;
 
     // 待处理的好友申请
     QList<FriendRequest> m_pendingRequests;
@@ -209,6 +220,7 @@ private:
     int m_currentGroupId = 0;               // 当前群聊ID（0表示私聊模式）
     bool m_isGroupChat = false;             // 当前是否在群聊模式
     QMap<int, QList<ChatMessage>> m_groupChatHistory;  // 群聊记录
+    QMap<int, QDateTime> m_groupLastMsgTime;           // 群聊最后消息时间
     QSet<int> m_groupIds;                   // 用户加入的群ID集合
     QString m_currentUserName;              // 当前用户用户名
     QList<int> m_pendingGroupMembers;       // 创建群时待邀请的成员列表

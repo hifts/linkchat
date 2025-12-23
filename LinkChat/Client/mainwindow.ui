@@ -12,8 +12,8 @@
   </property>
   <property name="minimumSize">
    <size>
-    <width>0</width>
-    <height>0</height>
+    <width>750</width>
+    <height>450</height>
    </size>
   </property>
   <property name="maximumSize">
@@ -25,7 +25,7 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
-  <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="0,0,0">
+  <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="0,1,3">
    <property name="spacing">
     <number>0</number>
    </property>
@@ -300,6 +300,12 @@
    </item>
    <item>
     <widget class="QWidget" name="chatArea" native="true">
+     <property name="minimumSize">
+      <size>
+       <width>400</width>
+       <height>0</height>
+      </size>
+     </property>
      <layout class="QVBoxLayout" name="verticalLayout_3" stretch="1,10,0">
       <property name="spacing">
        <number>3</number>
@@ -412,11 +418,14 @@
           </property>
           <property name="font">
            <font>
-            <pointsize>18</pointsize>
+            <pointsize>16</pointsize>
            </font>
           </property>
           <property name="text">
-           <string>+</string>
+           <string>🖼</string>
+          </property>
+          <property name="toolTip">
+           <string>发送图片</string>
           </property>
          </widget>
         </item>
@@ -436,11 +445,14 @@
           </property>
           <property name="font">
            <font>
-            <pointsize>18</pointsize>
+            <pointsize>16</pointsize>
            </font>
           </property>
           <property name="text">
-           <string>+</string>
+           <string>📎</string>
+          </property>
+          <property name="toolTip">
+           <string>发送文件</string>
           </property>
          </widget>
         </item>

@@ -6,6 +6,8 @@
 #include <QSqlError>
 #include <QDebug>
 #include <QSqlQuery>
+#include <QDateTime>
+#include <QDataStream>
 
 DBManager &DBManager::instance()
 {
@@ -174,9 +176,20 @@ QList<FriendInfo> DBManager::getFriendList(int uid)
     QList<FriendInfo> list;
 
     QSqlQuery query(m_db);
-    query.prepare("select u.id,u.username from t_user u "
-                  "join t_friend f on u.id = f.friend_id "
-                  "where f.user_id = ?");
+    // 联合查询好友信息和最后一条消息的时间
+    query.prepare(
+        "SELECT u.id, u.username, "
+        "COALESCE(MAX(h.send_time), 0) as last_msg_time "
+        "FROM t_user u "
+        "JOIN t_friend f ON u.id = f.friend_id "
+        "LEFT JOIN t_chat_history h ON "
+        "  ((h.sender_id = ? AND h.receiver_id = u.id) OR "
+        "   (h.sender_id = u.id AND h.receiver_id = ?)) "
+        "WHERE f.user_id = ? "
+        "GROUP BY u.id, u.username"
+    );
+    query.addBindValue(uid);
+    query.addBindValue(uid);
     query.addBindValue(uid);
 
     if(query.exec()){
@@ -185,6 +198,10 @@ QList<FriendInfo> DBManager::getFriendList(int uid)
             info.id = query.value(0).toInt();
             QString name = query.value(1).toString();
             strncpy(info.userName,name.toStdString().c_str(),32);
+            
+            // 获取最后消息时间（Unix时间戳）
+            QDateTime lastMsgTime = query.value(2).toDateTime();
+            info.lastMsgTime = lastMsgTime.isValid() ? lastMsgTime.toSecsSinceEpoch() : 0;
 
             // 判断用户是否在线
             bool online = TcpServer::instance().isOnline(info.id);
@@ -366,13 +383,13 @@ void DBManager::saveChatMessage(int senderId, int receiverId, const QByteArray &
     query.exec();
 }
 
-QList<QPair<int, QByteArray> > DBManager::getChatHistory(int userId, int friendId, int limit)
+QList<std::tuple<int, QByteArray, quint64>> DBManager::getChatHistory(int userId, int friendId, int limit)
 {
-    QList<QPair<int, QByteArray>> list;
+    QList<std::tuple<int, QByteArray, quint64>> list;
 
     QSqlQuery query(m_db);
     query.prepare(
-        "SELECT sender_id, content FROM t_chat_history "
+        "SELECT sender_id, content, UNIX_TIMESTAMP(send_time) FROM t_chat_history "
         "WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?) "
         "ORDER BY send_time ASC LIMIT ?"
         );
@@ -384,7 +401,10 @@ QList<QPair<int, QByteArray> > DBManager::getChatHistory(int userId, int friendI
 
     if(query.exec()){
         while (query.next()) {
-            list.append(qMakePair(query.value(0).toInt(),query.value(1).toByteArray()));
+            int senderId = query.value(0).toInt();
+            QByteArray content = query.value(1).toByteArray();
+            quint64 timestamp = query.value(2).toULongLong();
+            list.append(std::make_tuple(senderId, content, timestamp));
         }
     }
 
@@ -489,10 +509,13 @@ QList<GroupInfo> DBManager::getGroupList(int userId)
     query.prepare(
         "SELECT g.id, g.group_name, "
         "(SELECT COUNT(*) FROM t_group_members WHERE group_id = g.id) as member_count, "
-        "(SELECT username FROM t_user WHERE id = g.creator_id) as creator_name "
+        "(SELECT username FROM t_user WHERE id = g.creator_id) as creator_name, "
+        "COALESCE(MAX(gm.send_time), 0) as last_msg_time "
         "FROM t_groups g "
         "JOIN t_group_members m ON g.id = m.group_id "
-        "WHERE m.user_id = ?"
+        "LEFT JOIN t_group_messages gm ON g.id = gm.group_id "
+        "WHERE m.user_id = ? "
+        "GROUP BY g.id, g.group_name, g.creator_id"
     );
     query.addBindValue(userId);
 
@@ -507,6 +530,11 @@ QList<GroupInfo> DBManager::getGroupList(int userId)
             QString creatorName = query.value(3).toString();
             strncpy(info.creatorName, creatorName.toUtf8().constData(), 31);
             info.creatorName[31] = '\0';
+            
+            // 获取最后消息时间（Unix时间戳）
+            QDateTime lastMsgTime = query.value(4).toDateTime();
+            info.lastMsgTime = lastMsgTime.isValid() ? lastMsgTime.toSecsSinceEpoch() : 0;
+            
             list.append(info);
         }
     }
@@ -605,14 +633,14 @@ void DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &co
     }
 }
 
-QList<std::tuple<int, QString, QByteArray>> DBManager::getGroupChatHistory(int groupId, int limit)
+QList<std::tuple<int, QString, QByteArray, quint64>> DBManager::getGroupChatHistory(int groupId, int limit)
 {
     // 返回群聊历史消息（content 是加密的密文，客户端负责解密）
-    QList<std::tuple<int, QString, QByteArray>> list;
+    QList<std::tuple<int, QString, QByteArray, quint64>> list;
     QSqlQuery query(m_db);
 
     query.prepare(
-        "SELECT m.sender_id, u.username, m.content "
+        "SELECT m.sender_id, u.username, m.content, UNIX_TIMESTAMP(m.send_time) "
         "FROM t_group_messages m "
         "JOIN t_user u ON m.sender_id = u.id "
         "WHERE m.group_id = ? "
@@ -627,7 +655,8 @@ QList<std::tuple<int, QString, QByteArray>> DBManager::getGroupChatHistory(int g
             int senderId = query.value(0).toInt();
             QString senderName = query.value(1).toString();
             QByteArray content = query.value(2).toByteArray();  // 加密的密文
-            list.append(std::make_tuple(senderId, senderName, content));
+            quint64 timestamp = query.value(3).toULongLong();
+            list.append(std::make_tuple(senderId, senderName, content, timestamp));
         }
     }
 

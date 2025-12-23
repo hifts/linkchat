@@ -18,7 +18,8 @@ public:
         RoleImage,          // 图片数据
         RoleSenderName,     // 发送者用户名
         RoleIsGroupChat,    // 是否是群聊
-        RoleEncryptionStatus // 加密状态
+        RoleEncryptionStatus, // 加密状态
+        RoleTimestamp       // 时间戳
     };
 
     explicit ChatModel(QObject *parent = nullptr);

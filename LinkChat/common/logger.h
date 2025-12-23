@@ -142,8 +142,8 @@ private:
     static QString levelToString(Level level) {
         switch (level) {
         case DEBUG: return "DEBUG";
-        case INFO:  return "INFO ";
-        case WARN:  return "WARN ";
+        case INFO:  return "INFO";
+        case WARN:  return "WARN";
         case ERROR: return "ERROR";
         default:    return "UNKNW";
         }

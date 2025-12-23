@@ -126,6 +126,7 @@ struct FriendInfo
     int id;                 // 好友id
     char userName[32];      // 好友名称
     int status;             // 1=在线，0=离线
+    qint64 lastMsgTime;     // 最后一条消息的时间戳（秒）
 };
 
 // 搜索请求
@@ -235,6 +236,7 @@ struct GroupInfo {
     char groupName[64];     // 群名称
     int memberCount;        // 成员数量
     char creatorName[32];   // 创建者名称
+    qint64 lastMsgTime;     // 最后一条消息的时间戳（秒）
 };
 
 // 群成员信息结构

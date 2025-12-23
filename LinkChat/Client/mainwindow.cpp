@@ -282,8 +282,14 @@ void MainWindow::initUI()
     navButtonGroup->addButton(ui->btnContact);
     navButtonGroup->addButton(ui->btnNewFriends);
 
-    // 默认选中"好友"按钮
-    ui->btnContact->setChecked(true);
+    // 默认选中"会话"按钮，并隐藏聊天内容
+    ui->btnChat->setChecked(true);
+    ui->lblChatTitle->setVisible(false);
+    ui->chatList->setVisible(false);
+    ui->msgEdit->setVisible(false);
+    ui->btnSend->setVisible(false);
+    ui->btnImage->setVisible(false);
+    ui->btnFile->setVisible(false);
 
 
 
@@ -840,15 +846,55 @@ void MainWindow::checkIncompleteTransfers()
     // 如果选择No，保留状态但不恢复
 }
 
+void MainWindow::updateContactLastMsgTime(int friendId, const QDateTime &time)
+{
+    // 更新时间记录
+    if (friendId > 0) {
+        m_lastMsgTime[friendId] = time;
+    } else if (friendId < 0) {
+        // 群聊（负数ID）
+        m_groupLastMsgTime[-friendId] = time;
+    }
+    
+    // 更新好友列表中对应项的显示
+    for (int i = 0; i < ui->contactList->count(); ++i) {
+        QListWidgetItem *item = ui->contactList->item(i);
+        int itemId = item->data(ContactDelegate::RoleStatus).toInt();
+        
+        if (itemId == friendId) {
+            item->setData(ContactDelegate::RoleLastMsgTime, time);
+            // 触发重绘 - 使用 viewport()->update()
+            ui->contactList->viewport()->update();
+            break;
+        }
+    }
+}
+
+void MainWindow::updateContactListMode(bool isSessionMode)
+{
+    // 切换模式时，重新请求好友列表和群聊列表
+    // 这样可以根据当前模式过滤显示
+    NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ, QByteArray());
+    NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
+}
+
 void MainWindow::onFriendListReceived(QList<FriendInfo> list)
 {
     ui->contactList->clear();
     m_friendIds.clear();
 
+    // 判断当前是否是会话模式
+    bool isSessionMode = ui->btnChat->isChecked();
+
     for(const auto &info : list){
 
         // 保存好友id
         m_friendIds.insert(info.id);
+        
+        // 会话模式下，只显示有聊天记录的好友
+        if (isSessionMode && info.lastMsgTime == 0) {
+            continue; // 跳过没有聊天记录的好友
+        }
 
         QListWidgetItem *item = new QListWidgetItem(ui->contactList);
         item->setSizeHint(QSize(200,60));
@@ -857,6 +903,14 @@ void MainWindow::onFriendListReceived(QList<FriendInfo> list)
         item->setData(ContactDelegate::RoleStatus,info.id);
         item->setData(ContactDelegate::RoleName,QString::fromUtf8(info.userName));
         item->setData(ContactDelegate::RoleIsFriend, true);
+        item->setData(ContactDelegate::RoleShowTime, isSessionMode); // 设置是否显示时间
+        
+        // 设置最后消息时间
+        if (info.lastMsgTime > 0) {
+            QDateTime lastTime = QDateTime::fromSecsSinceEpoch(info.lastMsgTime);
+            item->setData(ContactDelegate::RoleLastMsgTime, lastTime);
+            m_lastMsgTime[info.id] = lastTime;
+        }
 
         QString status = (info.status == 1)? "[在线]" : "[离线]";
         item->setText(QString("%1 %2").arg(status,QString::fromUtf8(info.userName)));
@@ -907,6 +961,16 @@ void MainWindow::onContactListClicked(QListWidgetItem *item)
             "QPushButton { background-color: #5865F2; color: white; border-radius: 8px; padding: 5px 20px; font-weight: bold; }"
             "QPushButton:hover { background-color: #4752c4; }"
         );
+        
+        // 只有在会话模式下才显示聊天内容
+        if(ui->btnChat->isChecked()){
+            ui->lblChatTitle->setVisible(true);
+            ui->chatList->setVisible(true);
+            ui->msgEdit->setVisible(true);
+            ui->btnSend->setVisible(true);
+            ui->btnImage->setVisible(true);
+            ui->btnFile->setVisible(true);
+        }
     } else {
         // 私聊
         if (id <= 0 || id == m_currentFriendId) {
@@ -939,6 +1003,16 @@ void MainWindow::onContactListClicked(QListWidgetItem *item)
                 "QPushButton { background-color: #5865F2; color: white; border-radius: 8px; padding: 5px 20px; font-weight: bold; }"
                 "QPushButton:hover { background-color: #4752c4; }"
             );
+            
+            // 只有在会话模式下才显示聊天内容
+            if(ui->btnChat->isChecked()){
+                ui->lblChatTitle->setVisible(true);
+                ui->chatList->setVisible(true);
+                ui->msgEdit->setVisible(true);
+                ui->btnSend->setVisible(true);
+                ui->btnImage->setVisible(true);
+                ui->btnFile->setVisible(true);
+            }
         } else {
             ui->lblChatTitle->setText("选择一个好友开始聊天");
             ui->msgEdit->setEnabled(false);
@@ -1039,6 +1113,9 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
         if (!m_chatHistory[m_currentFriendId].isEmpty() || m_currentFriendId == srcId) {
             m_chatHistory[srcId].append(msg);
         }
+        
+        // 更新最后消息时间
+        updateContactLastMsgTime(srcId, QDateTime::currentDateTime());
 
     }else if (subType == SUB_IMAGE) {
         // 检查解密是否失败（内容为空）
@@ -1089,38 +1166,41 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
         if (!m_chatHistory[m_currentFriendId].isEmpty() || m_currentFriendId == srcId) {
             m_chatHistory[srcId].append(msg);
         }
+        
+        // 更新最后消息时间
+        updateContactLastMsgTime(srcId, QDateTime::currentDateTime());
     }
 }
 
-void MainWindow::onSigChatHistoryReceived(int friendId, const QList<QPair<int, QByteArray> > &history)
+void MainWindow::onSigChatHistoryReceived(int friendId, const QList<std::tuple<int, QByteArray, quint64>> &history)
 {
     if (friendId != m_currentFriendId) return;
 
-    for (const auto &p : history) {
-        bool isMe = (p.first == m_currentUserId);
+    for (const auto &item : history) {
+        int senderId = std::get<0>(item);
+        QByteArray rawBody = std::get<1>(item);
+        quint64 timestamp = std::get<2>(item);
+        
+        bool isMe = (senderId == m_currentUserId);
         QString avatar = isMe ? ":/res/me.jpg" : ":/res/you.jpeg";
 
-        QByteArray rawBody = p.second;
         if (rawBody.isEmpty()) continue;
 
         // 获取协议头 (第一个字节)
         char msgType = rawBody[0];
 
         // 获取实际内容 (去掉第一个字节)
-        // 注意：NetworkManager 已经处理了解密，这里的内容已经是解密后的
         QByteArray content = rawBody.mid(1);
 
         if (msgType == SUB_IMAGE) {
             // --- 图片处理 ---
-            // 调用接收 QByteArray 的构造函数，这会将 type 设置为 TypeImage
-            ChatMessage msg(content, isMe, avatar);
+            ChatMessage msg(content, isMe, avatar, timestamp);
             m_chatModel->addMessage(msg);
 
         } else {
             // --- 文本处理 ---
-            // 调用接收 QString 的构造函数，这会将 type 设置为 TypeText
             QString text = QString::fromUtf8(content);
-            ChatMessage msg(text, isMe, avatar);
+            ChatMessage msg(text, isMe, avatar, timestamp);
             m_chatModel->addMessage(msg);
         }
     }
@@ -1490,9 +1570,15 @@ void MainWindow::onFileReceiveFailed(const QString &fileId, const QString &error
 
 void MainWindow::onGroupListReceived(QList<GroupInfo> list)
 {
+    // 判断当前是否是会话模式
+    bool isSessionMode = ui->btnChat->isChecked();
+    
     // 在好友列表下方追加群聊列表（用不同样式区分）
     for (const auto &info : list) {
         m_groupIds.insert(info.groupId);
+        
+        // 群聊在会话模式下也要显示，不管有没有聊天记录
+        // 所以不需要过滤
 
         QListWidgetItem *item = new QListWidgetItem(ui->contactList);
         item->setSizeHint(QSize(200, 60));
@@ -1501,6 +1587,14 @@ void MainWindow::onGroupListReceived(QList<GroupInfo> list)
         item->setData(ContactDelegate::RoleStatus, -info.groupId);  // 负数表示群ID
         item->setData(ContactDelegate::RoleName, QString::fromUtf8(info.groupName));
         item->setData(ContactDelegate::RoleIsFriend, true);  // 群聊也标记为true以允许点击
+        item->setData(ContactDelegate::RoleShowTime, isSessionMode); // 设置是否显示时间
+        
+        // 设置最后消息时间
+        if (info.lastMsgTime > 0) {
+            QDateTime lastTime = QDateTime::fromSecsSinceEpoch(info.lastMsgTime);
+            item->setData(ContactDelegate::RoleLastMsgTime, lastTime);
+            m_groupLastMsgTime[info.groupId] = lastTime;
+        }
 
         QString displayText = QString("[群聊] %1 (%2人)").arg(QString::fromUtf8(info.groupName)).arg(info.memberCount);
         item->setText(displayText);
@@ -1569,6 +1663,9 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                 }
             }
         }
+        
+        // 更新最后消息时间（群聊ID为负数）
+        updateContactLastMsgTime(-groupId, QDateTime::currentDateTime());
     } else if (subType == SUB_IMAGE) {
         // 检查解密是否失败（内容为空）
         if (realData.isEmpty()) {
@@ -1615,10 +1712,13 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                 }
             }
         }
+        
+        // 更新最后消息时间（群聊ID为负数）
+        updateContactLastMsgTime(-groupId, QDateTime::currentDateTime());
     }
 }
 
-void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray>>& history)
+void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray, quint64>>& history)
 {
     if (!m_isGroupChat || groupId != m_currentGroupId) return;
 
@@ -1626,6 +1726,7 @@ void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<
         int senderId = std::get<0>(item);
         QString senderName = std::get<1>(item);
         QByteArray rawBody = std::get<2>(item);
+        quint64 timestamp = std::get<3>(item);
 
         if (rawBody.isEmpty()) continue;
 
@@ -1639,21 +1740,21 @@ void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<
         if (realContent.isEmpty()) {
             LOG_WARN_FMT("[MainWindow] Received group history with empty content from group %1 - decryption may have failed", groupId);
             if (msgType == SUB_IMAGE) {
-                ChatMessage msg(QString("[历史群图片解密失败]"), isMe, avatar, senderName);
+                ChatMessage msg(QString("[历史群图片解密失败]"), isMe, avatar, senderName, timestamp);
                 m_chatModel->addMessage(msg);
             } else {
-                ChatMessage msg(QString("[历史群消息解密失败]"), isMe, avatar, senderName);
+                ChatMessage msg(QString("[历史群消息解密失败]"), isMe, avatar, senderName, timestamp);
                 m_chatModel->addMessage(msg);
             }
             continue;
         }
 
         if (msgType == SUB_IMAGE) {
-            ChatMessage msg(realContent, isMe, avatar, senderName);
+            ChatMessage msg(realContent, isMe, avatar, senderName, timestamp);
             m_chatModel->addMessage(msg);
         } else {
             QString text = QString::fromUtf8(realContent);
-            ChatMessage msg(text, isMe, avatar, senderName);
+            ChatMessage msg(text, isMe, avatar, senderName, timestamp);
             m_chatModel->addMessage(msg);
         }
     }
@@ -1958,6 +2059,9 @@ void MainWindow::on_btnSend_clicked()
         // 本地显示（群聊消息也显示自己的用户名）
         ChatMessage msg(text, true, ":/res/me.jpg", m_currentUserName);
         m_chatModel->addMessage(msg);
+        
+        // 更新最后消息时间（群聊ID为负数）
+        updateContactLastMsgTime(-m_currentGroupId, QDateTime::currentDateTime());
     } else if (m_currentFriendId > 0) {
         // 私聊发送 - 需要加密
         QByteArray body;
@@ -1993,6 +2097,9 @@ void MainWindow::on_btnSend_clicked()
 
         ChatMessage msg(text, true, ":/res/me.jpg");
         m_chatModel->addMessage(msg);
+        
+        // 更新最后消息时间
+        updateContactLastMsgTime(m_currentFriendId, QDateTime::currentDateTime());
     } else {
         return;
     }
@@ -2022,6 +2129,41 @@ void MainWindow::on_btnContact_clicked()
         NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ, QByteArray());
         NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ,QByteArray());
     }
+    
+    // 点击好友按钮时，隐藏聊天内容但保留背景
+    ui->lblChatTitle->setVisible(false);
+    ui->chatList->setVisible(false);
+    ui->msgEdit->setVisible(false);
+    ui->btnSend->setVisible(false);
+    ui->btnImage->setVisible(false);
+    ui->btnFile->setVisible(false);
+    
+    // 切换到好友模式，不显示时间
+    updateContactListMode(false);
+}
+
+void MainWindow::on_btnChat_clicked()
+{
+    // 点击会话按钮时，显示好友列表
+    if(ui->stackedWidget->currentIndex() != 0){
+        ui->stackedWidget->setCurrentIndex(0);
+        ui->searchEdit->clear();
+        NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ, QByteArray());
+        NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ,QByteArray());
+    }
+    
+    // 显示聊天内容（如果之前选择过好友）
+    if(m_currentFriendId > 0 || m_currentGroupId > 0){
+        ui->lblChatTitle->setVisible(true);
+        ui->chatList->setVisible(true);
+        ui->msgEdit->setVisible(true);
+        ui->btnSend->setVisible(true);
+        ui->btnImage->setVisible(true);
+        ui->btnFile->setVisible(true);
+    }
+    
+    // 切换到会话模式，显示时间
+    updateContactListMode(true);
 }
 
 void MainWindow::on_btnNewFriends_clicked()

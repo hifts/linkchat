@@ -97,7 +97,7 @@ void ReconnectManager::startReconnect()
 
     // 检查是否到达最大重连次数
     if(m_maxAttempts > 0 && m_reconnectAttempts >= m_maxAttempts){
-        LOG_ERROR_FMT("已达到最大重连次数%1，停止重连",m_maxAttempts);
+        LOG_ERROR(QString("已达到最大重连次数%1，停止重连").arg(m_maxAttempts));
 
         // 发送最大重连次数信号
         emit maxAttemptsReached();

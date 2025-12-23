@@ -185,10 +185,11 @@ void ClientSocket::onReadyRead()
             out.setByteOrder(QDataStream::LittleEndian);
             out<<quint32(history.size());
 
-            for (const auto &p : history) {
-                out << quint32(p.first);
-                out << quint32(p.second.size());
-                out.writeRawData(p.second.constData(), p.second.size());
+            for (const auto &item : history) {
+                out << quint32(std::get<0>(item));  // senderId
+                out << quint64(std::get<2>(item));  // timestamp
+                out << quint32(std::get<1>(item).size());  // content size
+                out.writeRawData(std::get<1>(item).constData(), std::get<1>(item).size());  // content
             }
             this->write(makePacket(MSG_CHAT_HISTORY_RESP, resp, friendId, m_uid));
             break;
@@ -534,8 +535,10 @@ void ClientSocket::onReadyRead()
                 int senderId = std::get<0>(item);
                 QString senderName = std::get<1>(item);
                 QByteArray content = std::get<2>(item);
+                quint64 timestamp = std::get<3>(item);
 
                 out << quint32(senderId);
+                out << quint64(timestamp);  // 添加时间戳
                 QByteArray nameBytes = senderName.toUtf8();
                 out << quint32(nameBytes.size());
                 out.writeRawData(nameBytes.constData(), nameBytes.size());

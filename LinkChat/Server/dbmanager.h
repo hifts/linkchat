@@ -52,8 +52,8 @@ public:
     // 保存历史消息
     void saveChatMessage(int senderId,int receiverId,const QByteArray &content);
 
-    // 获取历史消息
-    QList<QPair<int, QByteArray>> getChatHistory(int userId, int friendId, int limit = 200);
+    // 获取历史消息（返回：senderId, content, timestamp）
+    QList<std::tuple<int, QByteArray, quint64>> getChatHistory(int userId, int friendId, int limit = 200);
 
     // 保存离线消息
     void saveOfflineMessage(int senderId, int receiverId, const QByteArray &content);
@@ -82,8 +82,8 @@ public:
     // 保存群聊消息
     void saveGroupMessage(int groupId, int senderId, const QByteArray &content);
 
-    // 获取群聊历史消息（返回：senderId, senderName, content）
-    QList<std::tuple<int, QString, QByteArray>> getGroupChatHistory(int groupId, int limit = 200);
+    // 获取群聊历史消息（返回：senderId, senderName, content, timestamp）
+    QList<std::tuple<int, QString, QByteArray, quint64>> getGroupChatHistory(int groupId, int limit = 200);
 
     // 保存群聊离线消息
     void saveGroupOfflineMessage(int groupId, int senderId, int receiverId, const QByteArray &content);
