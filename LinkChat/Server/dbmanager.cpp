@@ -311,15 +311,92 @@ bool DBManager::addFriend(int userId, int friendId)
     }
 }
 
+bool DBManager::deleteFriend(int userId, int friendId)
+{
+    if (userId == friendId) {
+        qWarning() << "Cannot delete self as friend:" << userId;
+        return false;
+    }
+
+    if (!isFriend(userId, friendId)) {
+        qWarning() << "Users are not friends:" << userId << "and" << friendId;
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+
+    // 开启事务
+    if (!m_db.transaction()) {
+        qCritical() << "Failed to start transaction";
+        return false;
+    }
+
+    bool success = true;
+    
+    // 删除双向好友关系
+    query.prepare("DELETE FROM t_friend WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)");
+    query.addBindValue(userId);
+    query.addBindValue(friendId);
+    query.addBindValue(friendId);
+    query.addBindValue(userId);
+
+    if (!query.exec()) {
+        success = false;
+        qCritical() << "Delete friend failed:" << query.lastError().text();
+    }
+
+    // 同时删除相关的好友请求记录（双向）
+    if (success) {
+        query.clear();
+        query.prepare("DELETE FROM t_friend_request WHERE "
+                     "(requester_id = ? AND target_id = ?) OR "
+                     "(requester_id = ? AND target_id = ?)");
+        query.addBindValue(userId);
+        query.addBindValue(friendId);
+        query.addBindValue(friendId);
+        query.addBindValue(userId);
+        
+        if (!query.exec()) {
+            qWarning() << "Failed to delete friend request records:" << query.lastError().text();
+            // 不影响删除好友的成功，只是警告
+        } else {
+            qDebug() << "Deleted friend request records between" << userId << "and" << friendId;
+        }
+    }
+
+    if (success) {
+        // 提交事务
+        m_db.commit();
+        qDebug() << "Successfully deleted friendship between" << userId << "and" << friendId;
+        return true;
+    } else {
+        // 回滚事务
+        m_db.rollback();
+        return false;
+    }
+}
+
 void DBManager::saveFriendRequest(int requesterId, const QString &requesterName, int targetId)
 {
     QSqlQuery query(m_db);
-    query.prepare("insert into t_friend_request (requester_id,target_id,requester_name) values (?,?,?)");
+    
+    // 先删除旧的请求记录（如果存在），避免重复
+    // 这样可以支持删除好友后重新添加的场景
+    query.prepare("DELETE FROM t_friend_request WHERE requester_id = ? AND target_id = ?");
+    query.addBindValue(requesterId);
+    query.addBindValue(targetId);
+    query.exec(); // 忽略删除结果，可能本来就没有旧记录
+    
+    // 插入新的好友请求
+    query.clear();
+    query.prepare("insert into t_friend_request (requester_id,target_id,requester_name,request_time) values (?,?,?,NOW())");
     query.addBindValue(requesterId);
     query.addBindValue(targetId);
     query.addBindValue(requesterName);
-
-    query.exec();
+    
+    if (!query.exec()) {
+        qCritical() << "[DBManager] Failed to save friend request:" << query.lastError().text();
+    }
 }
 
 QList<QPair<int, QString>> DBManager::getPendingRequests(int userId)
@@ -329,10 +406,15 @@ QList<QPair<int, QString>> DBManager::getPendingRequests(int userId)
 
     query.prepare("select requester_id,requester_name from t_friend_request where target_id = ? and status = 0");
     query.addBindValue(userId);
+    
     if(query.exec()){
         while (query.next()) {
-            list.append(qMakePair(query.value(0).toInt(),query.value(1).toString()));
+            int requesterId = query.value(0).toInt();
+            QString requesterName = query.value(1).toString();
+            list.append(qMakePair(requesterId, requesterName));
         }
+    } else {
+        qCritical() << "[DBManager] Failed to get pending requests:" << query.lastError().text();
     }
 
     return list;

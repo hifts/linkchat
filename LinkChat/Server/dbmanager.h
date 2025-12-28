@@ -34,6 +34,9 @@ public:
     // 添加好友（双向）
     bool addFriend(int userId, int friendId);
 
+    // 删除好友（双向）
+    bool deleteFriend(int userId, int friendId);
+
     // 保存好友请求
     void saveFriendRequest(int requesterId,const QString &requesterName,int targetId);
 

@@ -25,6 +25,8 @@ enum MessageType{
     MSG_ADD_FRIEND_NOTIFY,          // 添加好友通知
     MSG_ADD_FRIEND_RESP,            // 处理好友回复（好友同意/拒绝）
     MSG_ADD_FRIEND_RESULT,          // 添加好友响应
+    MSG_DELETE_FRIEND_REQ,          // 删除好友请求
+    MSG_DELETE_FRIEND_RESP,         // 删除好友响应
     MSG_CHAT_TEXT,                  // 文本聊天
     MSG_FILE_TRANSFER_REQ,          // 文件传输请求
     MSG_FILE_TRANSFER_RESP,         // 文件传输响应
@@ -50,6 +52,7 @@ enum MessageType{
     MSG_REMOVE_FROM_GROUP_REQ,      // 移除群成员请求
     MSG_REMOVE_FROM_GROUP_NOTIFY,   // 移除群成员通知
     MSG_LEAVE_GROUP_REQ,            // 退出群聊请求
+    MSG_LEAVE_GROUP_RESP,           // 退出群聊响应
     MSG_GROUP_CHAT_TEXT,            // 群聊消息
     MSG_GROUP_CHAT_HISTORY_REQ,     // 群聊历史消息请求
     MSG_GROUP_CHAT_HISTORY_RESP     // 群聊历史消息响应
@@ -156,6 +159,17 @@ struct AddFriendNotify {
 struct AddFriendResp {
     int requesterId;
     bool accepted;      // true=同意，false=拒绝
+};
+
+// 删除好友请求包
+struct DeleteFriendReq {
+    int targetId;           // 要删除的好友ID
+};
+
+// 删除好友响应包
+struct DeleteFriendResp {
+    int result;             // 0=失败，1=成功
+    int targetId;           // 被删除的好友ID
 };
 
 // 文件传输请求结构
@@ -276,6 +290,12 @@ struct RemoveFromGroupNotify {
 
 // 退出群聊请求结构
 struct LeaveGroupReq {
+    int groupId;            // 群ID
+};
+
+// 退出群聊响应结构
+struct LeaveGroupResp {
+    int result;             // 0=失败，1=成功
     int groupId;            // 群ID
 };
 

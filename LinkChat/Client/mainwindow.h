@@ -11,6 +11,8 @@
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QWidget>
+#include <QMenu>
+#include <QMessageBox>
 #include <tuple>
 
 namespace Ui {
@@ -83,6 +85,9 @@ private:
     
     // 更新好友列表的显示模式（会话/好友）
     void updateContactListMode(bool isSessionMode);
+    
+    // 更新新朋友按钮的红点显示状态
+    void updateNewFriendsButtonState();
 
 private slots:
     // 处理收到的好友列表信号
@@ -119,6 +124,15 @@ private slots:
 
     // 处理好友拒绝
     void onSigFriendRequestRejected();
+
+    // 处理删除好友响应
+    void onSigDeleteFriendResponse(int result, int targetId);
+
+    // 联系人列表右键菜单
+    void onContactListContextMenu(const QPoint &pos);
+
+    // 处理退出群聊响应
+    void onSigLeaveGroupResponse(int result, int groupId);
 
     // 刷新好友请求
     void updateNewFriendsPage();
@@ -213,6 +227,9 @@ private:
 
     // 待处理的好友申请
     QList<FriendRequest> m_pendingRequests;
+    
+    // 是否有未处理的好友请求（用于显示红点）
+    bool m_hasUnreadFriendRequests = false;
 
     // 用于暂存等待对方同意的文件传输
     QMap<QString, QString> m_pendingFileTransfers;

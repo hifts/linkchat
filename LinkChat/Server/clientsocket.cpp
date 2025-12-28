@@ -118,7 +118,7 @@ void ClientSocket::onReadyRead()
 
                 // 逐条消息推送(延迟推送，避免客户端没初始化就推送导致消息缺失)
                 if(!offlineMsgs.isEmpty() || !pengingRequests.isEmpty() || !groupOfflineMsgs.isEmpty()){
-                    QTimer::singleShot(500, this, [=](){
+                    QTimer::singleShot(1500, this, [=](){
                         pushFriendRequests(pengingRequests);
                         pushOfflineMsgs(offlineMsgs);
                         pushGroupOfflineMsgs(groupOfflineMsgs);
@@ -234,6 +234,16 @@ void ClientSocket::onReadyRead()
             int requesterId = this->m_uid;
             QString name = this->m_userName;
 
+            // 检查是否已经是好友
+            if (DBManager::instance().isFriend(requesterId, targetId)) {
+                break;
+            }
+
+            // 检查是否已有待处理的请求
+            if (DBManager::instance().hasPendingRequest(requesterId, targetId)) {
+                break;
+            }
+
             // 请求存入数据库
             DBManager::instance().saveFriendRequest(requesterId,name,targetId);
 
@@ -270,6 +280,26 @@ void ClientSocket::onReadyRead()
             if (requesterSocket) {
                 requesterSocket->write(makePacket(MSG_ADD_FRIEND_RESULT, bodyData, 0, requesterId));
             }
+            break;
+        }
+        case MSG_DELETE_FRIEND_REQ:{
+            DeleteFriendReq *req = (DeleteFriendReq*)bodyData.data();
+            
+            int targetId = req->targetId;
+            int requesterId = this->m_uid;
+            
+            // 删除好友关系
+            bool success = DBManager::instance().deleteFriend(requesterId, targetId);
+            
+            // 构造响应
+            DeleteFriendResp resp;
+            resp.result = success ? 1 : 0;
+            resp.targetId = targetId;
+            
+            // 发送响应给请求者
+            this->write(makePacket(MSG_DELETE_FRIEND_RESP, QByteArray((char*)&resp, sizeof(DeleteFriendResp))));
+            
+            // 不通知被删除方，静默删除
             break;
         }
         case MSG_FILE_TRANSFER_REQ:{
@@ -471,7 +501,15 @@ void ClientSocket::onReadyRead()
         case MSG_LEAVE_GROUP_REQ: {
             // 退出群聊
             LeaveGroupReq *req = (LeaveGroupReq*)bodyData.data();
-            DBManager::instance().removeGroupMember(req->groupId, this->m_uid);
+            bool success = DBManager::instance().removeGroupMember(req->groupId, this->m_uid);
+            
+            // 构造响应
+            LeaveGroupResp resp;
+            resp.result = success ? 1 : 0;
+            resp.groupId = req->groupId;
+            
+            // 发送响应给请求者
+            this->write(makePacket(MSG_LEAVE_GROUP_RESP, QByteArray((char*)&resp, sizeof(LeaveGroupResp))));
             break;
         }
         case MSG_GROUP_CHAT_TEXT: {

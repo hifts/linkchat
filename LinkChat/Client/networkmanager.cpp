@@ -379,6 +379,7 @@ void NetworkManager::onReadyRead()
         }
         case MSG_ADD_FRIEND_NOTIFY:{
             AddFriendNotify *notify = (AddFriendNotify*)body.data();
+            qDebug() << "[NetworkManager] Received friend request from" << notify->requesterId << "(" << QString::fromUtf8(notify->requesterName) << ")";
             emit sigFriendRequestReceived(notify->requesterId,QString::fromUtf8(notify->requesterName));
             break;
         }
@@ -392,6 +393,11 @@ void NetworkManager::onReadyRead()
             }else{
                 emit sigFriendRequestRejected();
             }
+            break;
+        }
+        case MSG_DELETE_FRIEND_RESP:{
+            DeleteFriendResp *resp = (DeleteFriendResp*)body.data();
+            emit sigDeleteFriendResponse(resp->result, resp->targetId);
             break;
         }
         case MSG_FILE_TRANSFER_REQ:{
@@ -607,6 +613,11 @@ void NetworkManager::onReadyRead()
                 history.append(std::make_tuple((int)senderId, senderName, decryptedContent, timestamp));
             }
             emit sigGroupChatHistoryReceived(groupId, history);
+            break;
+        }
+        case MSG_LEAVE_GROUP_RESP: {
+            LeaveGroupResp *resp = (LeaveGroupResp*)body.data();
+            emit sigLeaveGroupResponse(resp->result, resp->groupId);
             break;
         }
         case MSG_INVITE_TO_GROUP_NOTIFY: {

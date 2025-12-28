@@ -52,7 +52,7 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     // 判断是否是好友，决定文字区域的右边界
     bool isFriend = index.data(RoleIsFriend).toBool();
-    int rightMargin = 30; // 默认右边距（用于未读消息红点）
+    int rightMargin = 25; // 默认右边距（用于未读消息红点）
     
     // 如果是好友且有时间信息且在会话模式下，需要为时间预留空间
     if (isFriend && lastMsgTime.isValid() && showTime) {
@@ -65,20 +65,20 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         int timeWidth = timeFm.horizontalAdvance(timeText);
         
         // 为时间预留空间：时间宽度 + 红点空间 + 间距
-        rightMargin = timeWidth + 30 + 10; // 时间宽度 + 红点空间 + 额外间距
+        rightMargin = timeWidth + 25 + 8; // 时间宽度 + 红点空间 + 额外间距
     }
     
     // 如果不是好友，需要为"添加好友"按钮预留空间
     if (!isFriend) {
-        int btnWidth = 65;  // 减小按钮宽度
+        int btnWidth = 65;  // 按钮宽度
         int margin = 8;
         rightMargin = btnWidth + margin + 8; // 按钮宽度 + 边距 + 额外间隙
     }
 
     // 文字垂直居中，左对齐，根据情况调整右边距
-    QRect textRect = rect.adjusted(10, 0, -rightMargin, 0);
+    QRect textRect = rect.adjusted(12, 0, -rightMargin, 0); // 增加左边距，给文字更多空间
     
-    // 使用省略号处理过长的文本
+    // 使用省略号处理过长的文本，但现在有更多空间
     QFontMetrics fm(painter->font());
     QString elidedText = fm.elidedText(fullText, Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, elidedText);
@@ -97,31 +97,23 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         int timeWidth = timeFm.horizontalAdvance(timeText);
         
         // 在右侧显示时间（留出未读红点的空间）
-        int timeX = rect.right() - 30 - timeWidth - 5; // 30是红点空间，5px额外间距
+        int timeX = rect.right() - 25 - timeWidth - 5; // 25是红点空间，5px额外间距
         QRect timeRect(timeX, rect.top(), timeWidth, rect.height());
         painter->drawText(timeRect, Qt::AlignVCenter | Qt::AlignRight, timeText);
     }
 
     // 4. 【核心】绘制红点 (右侧) - 只在是好友时显示
     if (isFriend && unreadCount > 0) {
-        int dotSize = 18;
+        int dotSize = 8; // 改成小点，只有8像素
         // 计算红点位置：在 Item 最右侧偏左一点，垂直居中
-        int x = rect.right() - dotSize - 10;
+        int x = rect.right() - dotSize - 8;
         int y = rect.center().y() - dotSize / 2;
         QRect dotRect(x, y, dotSize, dotSize);
 
-        // 画红圆
-        painter->setBrush(QColor(0xF0, 0x47, 0x47)); // Discord 红色
+        // 画小圆点 - 使用默认颜色
+        painter->setBrush(QColor(0x8e, 0x92, 0x97)); // 灰色小点
         painter->setPen(Qt::NoPen);
         painter->drawEllipse(dotRect);
-
-        // 画数字
-        painter->setPen(Qt::white);
-        QFont countFont("Arial", 8, QFont::Bold);
-        painter->setFont(countFont);
-
-        QString countText = unreadCount > 99 ? "99+" : QString::number(unreadCount);
-        painter->drawText(dotRect, Qt::AlignCenter, countText);
     }
 
     // 绘制添加好友按钮(不是好友时才显示添加好友按钮)
@@ -167,8 +159,8 @@ QSize ContactDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
 {
     Q_UNUSED(option);
     Q_UNUSED(index);
-    // 固定每一行的高度，与之前 setSizeHint(200,60) 对应
-    return QSize(200, 60);
+    // 固定每一行的高度，增加宽度以适应更长的用户名
+    return QSize(300, 60); // 从200增加到300
 }
 
 QString ContactDelegate::formatMessageTime(const QDateTime &msgTime) const

@@ -18,6 +18,16 @@ MainWindow::MainWindow(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::MainWindow)
 {
+    // 先连接NetworkManager的关键信号，确保不会错过服务器推送的数据
+    connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestReceived,this,&MainWindow::onSigFriendRequestReceived);
+    connect(&NetworkManager::instance(),&NetworkManager::sigMsgReceived,this,&MainWindow::onSigMsgReceived);
+    connect(&NetworkManager::instance(),&NetworkManager::sigFriendListReceived,this,&MainWindow::onFriendListReceived);
+    connect(&NetworkManager::instance(),&NetworkManager::sigChatHistoryReceived,this,&MainWindow::onSigChatHistoryReceived);
+    connect(&NetworkManager::instance(), &NetworkManager::sigFriendStatusChanged,this,&MainWindow::onSigFriendStatusChanged);
+    connect(&NetworkManager::instance(),&NetworkManager::sigSearchUserResult,this,&MainWindow::onSigSearchUserResult);
+    connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestAccepted,this,&MainWindow::onSigFriendRequestAccepted);
+    connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestRejected,this,&MainWindow::onSigFriendRequestRejected);
+    
     ui->setupUi(this);
 
     setMouseTracking(true);
@@ -48,7 +58,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_searchTimer->setInterval(300);        // 隔300ms再触发搜索
     m_searchTimer->setSingleShot(true);     // 只触发一次
 
+    // 连接剩余的UI相关信号
     connectSignalsAndSlots();
+
+    // 初始化新朋友按钮状态
+    updateNewFriendsButtonState();
 
     // 界面出来后刷新好友列表和群列表(向服务器请求信息)
     // 使用 QTimer::singleShot 0ms 延时，确保构造函数执行完后再发包
@@ -599,41 +613,31 @@ void MainWindow::initModel()
     // 好友列表代理
     ui->contactList->setItemDelegate(m_contactDelegate);
 
+    // 设置联系人列表的上下文菜单
+    ui->contactList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->contactList, &QListWidget::customContextMenuRequested, this, &MainWindow::onContactListContextMenu);
+
 }
 
 void MainWindow::connectSignalsAndSlots()
 {
+    // NetworkManager的关键信号已经在构造函数开始时提前连接
+    // 这里只连接UI相关的信号和其他信号
+    
     // 计时器
     connect(m_searchTimer,&QTimer::timeout,this,&MainWindow::onSearchTimerTimeout);
-
-    // 好友列表显示
-    connect(&NetworkManager::instance(),&NetworkManager::sigFriendListReceived,this,&MainWindow::onFriendListReceived);
 
     // 选择好友列表聊天点击信号
     connect(ui->contactList,&QListWidget::pressed,this,&MainWindow::onContactListPressed);
 
-    // 关联聊天信息信号
-    connect(&NetworkManager::instance(),&NetworkManager::sigMsgReceived,this,&MainWindow::onSigMsgReceived);
-
-    connect(&NetworkManager::instance(),&NetworkManager::sigChatHistoryReceived,this,&MainWindow::onSigChatHistoryReceived);
-
-    // 关联好友状态更新信号
-    connect(&NetworkManager::instance(), &NetworkManager::sigFriendStatusChanged,this,&MainWindow::onSigFriendStatusChanged);
-
     // 监听搜索框
     connect(ui->searchEdit,&QLineEdit::textChanged,this,&::MainWindow::onSearchTextChanged);
 
-    // 关联搜索结果信号
-    connect(&NetworkManager::instance(),&NetworkManager::sigSearchUserResult,this,&MainWindow::onSigSearchUserResult);
+    // 关联删除好友响应信号
+    connect(&NetworkManager::instance(),&NetworkManager::sigDeleteFriendResponse,this,&MainWindow::onSigDeleteFriendResponse);
 
-    // 关联转发来的好友请求信号
-    connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestReceived,this,&MainWindow::onSigFriendRequestReceived);
-
-    // 关联同意信号
-    connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestAccepted,this,&MainWindow::onSigFriendRequestAccepted);
-
-    // 关联拒绝信号
-    connect(&NetworkManager::instance(),&NetworkManager::sigFriendRequestRejected,this,&MainWindow::onSigFriendRequestRejected);
+    // 关联退出群聊响应信号
+    connect(&NetworkManager::instance(),&NetworkManager::sigLeaveGroupResponse,this,&MainWindow::onSigLeaveGroupResponse);
 
     // 关联文件请求信号
     connect(&NetworkManager::instance(), &NetworkManager::sigFileTransferRequest,this, &MainWindow::onSigFileTransferRequest);
@@ -733,6 +737,11 @@ void MainWindow::removeRequestAndRefresh(int requesterId)
             break;
         }
     }
+    
+    // 检查是否还有未处理的好友请求，更新红点状态
+    m_hasUnreadFriendRequests = !m_pendingRequests.isEmpty();
+    updateNewFriendsButtonState();
+    
     updateNewFriendsPage();
 }
 
@@ -878,6 +887,19 @@ void MainWindow::updateContactListMode(bool isSessionMode)
     NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
 }
 
+void MainWindow::updateNewFriendsButtonState()
+{
+    if (m_hasUnreadFriendRequests) {
+        // 有未读的好友请求，显示一个简单的点
+        ui->btnNewFriends->setText("🔔 新朋友 •");
+        ui->btnNewFriends->setStyleSheet("");
+    } else {
+        // 没有未读的好友请求，隐藏红点
+        ui->btnNewFriends->setText("🔔 新朋友");
+        ui->btnNewFriends->setStyleSheet("");
+    }
+}
+
 void MainWindow::onFriendListReceived(QList<FriendInfo> list)
 {
     ui->contactList->clear();
@@ -897,7 +919,7 @@ void MainWindow::onFriendListReceived(QList<FriendInfo> list)
         }
 
         QListWidgetItem *item = new QListWidgetItem(ui->contactList);
-        item->setSizeHint(QSize(200,60));
+        item->setSizeHint(QSize(300,60));
 
         // 在item里存放用户id和用户名
         item->setData(ContactDelegate::RoleStatus,info.id);
@@ -1026,31 +1048,63 @@ void MainWindow::onContactListClicked(QListWidgetItem *item)
 
 void MainWindow::onContactListPressed(const QModelIndex &index)
 {
+    qDebug() << "[MainWindow] Contact list pressed, index:" << index.row();
+    
     QListWidgetItem *item = ui->contactList->item(index.row());
     if(!item){
+        qDebug() << "[MainWindow] No item found at index";
         return;
     }
 
-    QPoint pos = ui->contactList->viewport()->mapFromGlobal(QCursor::pos());
+    // 获取点击位置 - 使用正确的坐标系
+    QPoint globalPos = QCursor::pos();
+    QPoint localPos = ui->contactList->mapFromGlobal(globalPos);
     QRect itemRect = ui->contactList->visualItemRect(item);
+    
+    qDebug() << "[MainWindow] Global pos:" << globalPos;
+    qDebug() << "[MainWindow] Local pos:" << localPos;
+    qDebug() << "[MainWindow] Item rect:" << itemRect;
 
-    // 添加好友按钮区域
-    int btnWidth = 80, btnHeight = 28, margin = 10;
-    QRect btnRect(itemRect.right() - btnWidth - margin,itemRect.bottom() - btnHeight - margin,btnWidth,btnHeight);
+    // 添加好友按钮区域 - 与ContactDelegate中的绘制区域保持一致，但扩大点击区域
+    int btnWidth = 65, btnHeight = 24, margin = 8;
+    
+    // 扩大点击区域，让用户更容易点击到
+    int expandedWidth = btnWidth + 20;  // 左右各扩大10px
+    int expandedHeight = btnHeight + 16; // 上下各扩大8px
+    
+    // 按钮位置：使用绝对坐标（相对于contactList）
+    QRect btnRect(
+        itemRect.right() - expandedWidth - margin + 10,  // 调整x位置以保持居中
+        itemRect.top() + (itemRect.height() - expandedHeight) / 2,   // 垂直居中
+        expandedWidth,
+        expandedHeight
+    );
+    
+    qDebug() << "[MainWindow] Button rect (absolute):" << btnRect;
+    qDebug() << "[MainWindow] Is click in button?" << btnRect.contains(localPos);
 
-    // 鼠标点击在按钮内
-    if(btnRect.contains(pos)){
+    // 检查是否点击在按钮内
+    if(btnRect.contains(localPos)){
+        qDebug() << "[MainWindow] Click is within button area";
+        
         int targetId = item->data(ContactDelegate::RoleStatus).toInt();
         bool isFriend = item->data(ContactDelegate::RoleIsFriend).toBool();
+        
+        qDebug() << "[MainWindow] Target ID:" << targetId << "Is friend:" << isFriend << "Current user ID:" << m_currentUserId;
 
         if(!isFriend && targetId != m_currentUserId){
+            qDebug() << "[MainWindow] Sending friend request to:" << targetId;
             AddFriendReq req;
             req.targetId = targetId;
             NetworkManager::instance().sendMsg(MSG_ADD_FRIEND_REQ,QByteArray((char*)&req,sizeof(AddFriendReq)));
             QMessageBox::information(this,"提示","好友请求已发送");
+        } else {
+            qDebug() << "[MainWindow] Cannot send friend request - already friend or self";
         }
         return;
     }
+    
+    qDebug() << "[MainWindow] Click is outside button area, proceeding with normal click";
     onContactListClicked(item);
 }
 
@@ -1263,7 +1317,7 @@ void MainWindow::onSigSearchUserResult(QList<FriendInfo> list)
 
     for(const auto &info : list){
         QListWidgetItem *item = new QListWidgetItem(ui->contactList);
-        item->setSizeHint(QSize(200,60));
+        item->setSizeHint(QSize(300,60));
 
         // 判断是否是当前用户好友（排除自己）
         bool isFriend = m_friendIds.contains(info.id) || info.id == m_currentUserId;
@@ -1282,7 +1336,6 @@ void MainWindow::onSigSearchUserResult(QList<FriendInfo> list)
 
 void MainWindow::onSigFriendRequestReceived(int uid, const QString name)
 {
-
     // 防止重复添加
     if (std::any_of(m_pendingRequests.cbegin(), m_pendingRequests.cend(),
                     [uid](const FriendRequest& r) { return r.requesterId == uid; })) {
@@ -1290,6 +1343,10 @@ void MainWindow::onSigFriendRequestReceived(int uid, const QString name)
     }
 
     m_pendingRequests.append({uid,name});
+    
+    // 标记有未读的好友请求并更新按钮状态
+    m_hasUnreadFriendRequests = true;
+    updateNewFriendsButtonState();
 
     // 如果当前在新朋友界面则刷新
     if(ui->stackedWidget->currentIndex() == 1){
@@ -1581,7 +1638,7 @@ void MainWindow::onGroupListReceived(QList<GroupInfo> list)
         // 所以不需要过滤
 
         QListWidgetItem *item = new QListWidgetItem(ui->contactList);
-        item->setSizeHint(QSize(200, 60));
+        item->setSizeHint(QSize(300, 60));
 
         // 使用负数ID来区分群聊和好友
         item->setData(ContactDelegate::RoleStatus, -info.groupId);  // 负数表示群ID
@@ -2168,9 +2225,16 @@ void MainWindow::on_btnChat_clicked()
 
 void MainWindow::on_btnNewFriends_clicked()
 {
-    if(ui->stackedWidget->currentIndex() != 1){
+    // 只有当从其他页面切换到新朋友页面时，才清除未读标记
+    bool wasOnDifferentPage = (ui->stackedWidget->currentIndex() != 1);
+    
+    if(wasOnDifferentPage){
         ui->stackedWidget->setCurrentIndex(1);
         updateNewFriendsPage();
+        
+        // 切换到新朋友页面时，清除未读标记
+        m_hasUnreadFriendRequests = false;
+        updateNewFriendsButtonState();
     }
 }
 
@@ -2375,3 +2439,121 @@ void MainWindow::on_btnGroup_clicked()
 
 
 
+
+void MainWindow::onContactListContextMenu(const QPoint &pos)
+{
+    QListWidgetItem *item = ui->contactList->itemAt(pos);
+    if (!item) {
+        return;
+    }
+
+    // 检查是否是好友（不是搜索结果）
+    bool isFriend = item->data(ContactDelegate::RoleIsFriend).toBool();
+    if (!isFriend) {
+        return; // 只对好友和群聊显示菜单
+    }
+
+    // 检查是否是群聊（群聊ID为负数）
+    int contactId = item->data(ContactDelegate::RoleStatus).toInt();
+    
+    // 只在好友模式下显示右键菜单
+    if (ui->btnContact->isChecked()) {
+        // 创建上下文菜单
+        QMenu contextMenu(this);
+        
+        if (contactId < 0) {
+            // 群聊：显示退出群聊选项
+            QAction *leaveGroupAction = contextMenu.addAction("退出群聊");
+            leaveGroupAction->setIcon(QIcon(":/icons/leave.png")); // 如果有图标的话
+            
+            // 显示菜单并获取用户选择
+            QAction *selectedAction = contextMenu.exec(ui->contactList->mapToGlobal(pos));
+            
+            if (selectedAction == leaveGroupAction) {
+                // 弹出确认对话框
+                QString groupName = item->data(ContactDelegate::RoleName).toString();
+                int ret = QMessageBox::question(this, "退出群聊", 
+                                               QString("确定要退出群聊 \"%1\" 吗？\n退出后将无法收到群聊消息。").arg(groupName),
+                                               QMessageBox::Yes | QMessageBox::No,
+                                               QMessageBox::No);
+                
+                if (ret == QMessageBox::Yes) {
+                    // 发送退出群聊请求
+                    LeaveGroupReq req;
+                    req.groupId = -contactId; // 转换为正数的群ID
+                    
+                    NetworkManager::instance().sendMsg(MSG_LEAVE_GROUP_REQ, QByteArray((char*)&req, sizeof(LeaveGroupReq)));
+                }
+            }
+        } else {
+            // 好友：显示删除好友选项
+            QAction *deleteAction = contextMenu.addAction("删除好友");
+            deleteAction->setIcon(QIcon(":/icons/delete.png")); // 如果有图标的话
+
+            // 显示菜单并获取用户选择
+            QAction *selectedAction = contextMenu.exec(ui->contactList->mapToGlobal(pos));
+            
+            if (selectedAction == deleteAction) {
+                // 弹出确认对话框
+                QString friendName = item->data(ContactDelegate::RoleName).toString();
+                int ret = QMessageBox::question(this, "删除好友", 
+                                               QString("确定要删除好友 \"%1\" 吗？\n删除后将无法收到对方的消息。").arg(friendName),
+                                               QMessageBox::Yes | QMessageBox::No,
+                                               QMessageBox::No);
+                
+                if (ret == QMessageBox::Yes) {
+                    // 发送删除好友请求
+                    DeleteFriendReq req;
+                    req.targetId = contactId;
+                    
+                    NetworkManager::instance().sendMsg(MSG_DELETE_FRIEND_REQ, QByteArray((char*)&req, sizeof(DeleteFriendReq)));
+                }
+            }
+        }
+    }
+    // 如果是会话模式（btnChat->isChecked()），则不显示任何右键菜单
+}
+
+void MainWindow::onSigDeleteFriendResponse(int result, int targetId)
+{
+    if (result == 1) {
+        // 删除成功
+        QMessageBox::information(this, "删除好友", "好友删除成功！");
+        
+        // 刷新好友列表和群聊列表
+        NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ, QByteArray());
+        NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
+        
+        // 如果当前正在与被删除的好友聊天，清空聊天窗口
+        if (m_currentFriendId == targetId) {
+            m_chatModel->clearMessages();
+            ui->lblChatTitle->setText("选择一个好友开始聊天");
+            m_currentFriendId = 0;
+        }
+    } else {
+        // 删除失败
+        QMessageBox::warning(this, "删除好友", "删除好友失败，请稍后重试。");
+    }
+}
+void MainWindow::onSigLeaveGroupResponse(int result, int groupId)
+{
+    if (result == 1) {
+        // 退出成功
+        QMessageBox::information(this, "退出群聊", "成功退出群聊！");
+        
+        // 刷新好友列表和群聊列表
+        NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ, QByteArray());
+        NetworkManager::instance().sendMsg(MSG_GROUP_LIST_REQ, QByteArray());
+        
+        // 如果当前正在与退出的群聊聊天，清空聊天窗口
+        if (m_currentGroupId == groupId) {
+            m_chatModel->clearMessages();
+            ui->lblChatTitle->setText("选择一个好友开始聊天");
+            m_currentGroupId = 0;
+            m_isGroupChat = false;
+        }
+    } else {
+        // 退出失败
+        QMessageBox::warning(this, "退出群聊", "退出群聊失败，请稍后重试。");
+    }
+}

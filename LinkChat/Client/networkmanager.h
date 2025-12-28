@@ -89,6 +89,9 @@ signals:
     // 拒绝添加好友信号
     void sigFriendRequestRejected();
 
+    // 删除好友响应信号
+    void sigDeleteFriendResponse(int result, int targetId);
+
     void sigChatHistoryReceived(int friendId, const QList<std::tuple<int, QByteArray, quint64>>& history);
 
     // 发送文件请求信息(征求接收方意见)
@@ -114,6 +117,9 @@ signals:
 
     // 群聊历史消息接收（senderId, senderName, content, timestamp）
     void sigGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray, quint64>>& history);
+
+    // 退出群聊响应信号
+    void sigLeaveGroupResponse(int result, int groupId);
 
     // 邀请入群通知
     void sigInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
