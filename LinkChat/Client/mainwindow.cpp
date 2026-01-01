@@ -673,9 +673,15 @@ void MainWindow::connectSignalsAndSlots()
 
     connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,
     this,[this](const QString &fileId,const QString &savePath){
-        // 移除活动传输记录
-        ReconnectTransferManager::instance().removeCompletedTransfer(fileId);
-        onFileReceiveCompleted(fileId,savePath);
+        try {
+            // 移除活动传输记录
+            ReconnectTransferManager::instance().removeCompletedTransfer(fileId);
+            onFileReceiveCompleted(fileId,savePath);
+        } catch (const std::exception& e) {
+            LOG_ERROR_FMT("Exception in receiveCompleted signal handler: %1", e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in receiveCompleted signal handler");
+        }
     });
 
     connect(&FileReceiver::instance(),&FileReceiver::receiveFailed,this,&MainWindow::onFileReceiveFailed);
@@ -926,6 +932,7 @@ void MainWindow::onFriendListReceived(QList<FriendInfo> list)
         item->setData(ContactDelegate::RoleName,QString::fromUtf8(info.userName));
         item->setData(ContactDelegate::RoleIsFriend, true);
         item->setData(ContactDelegate::RoleShowTime, isSessionMode); // 设置是否显示时间
+        item->setData(ContactDelegate::RoleUnread, 0); // 初始化未读计数为0
         
         // 设置最后消息时间
         if (info.lastMsgTime > 0) {
@@ -1048,11 +1055,8 @@ void MainWindow::onContactListClicked(QListWidgetItem *item)
 
 void MainWindow::onContactListPressed(const QModelIndex &index)
 {
-    qDebug() << "[MainWindow] Contact list pressed, index:" << index.row();
-    
     QListWidgetItem *item = ui->contactList->item(index.row());
     if(!item){
-        qDebug() << "[MainWindow] No item found at index";
         return;
     }
 
@@ -1060,10 +1064,6 @@ void MainWindow::onContactListPressed(const QModelIndex &index)
     QPoint globalPos = QCursor::pos();
     QPoint localPos = ui->contactList->mapFromGlobal(globalPos);
     QRect itemRect = ui->contactList->visualItemRect(item);
-    
-    qDebug() << "[MainWindow] Global pos:" << globalPos;
-    qDebug() << "[MainWindow] Local pos:" << localPos;
-    qDebug() << "[MainWindow] Item rect:" << itemRect;
 
     // 添加好友按钮区域 - 与ContactDelegate中的绘制区域保持一致，但扩大点击区域
     int btnWidth = 65, btnHeight = 24, margin = 8;
@@ -1079,32 +1079,21 @@ void MainWindow::onContactListPressed(const QModelIndex &index)
         expandedWidth,
         expandedHeight
     );
-    
-    qDebug() << "[MainWindow] Button rect (absolute):" << btnRect;
-    qDebug() << "[MainWindow] Is click in button?" << btnRect.contains(localPos);
 
     // 检查是否点击在按钮内
     if(btnRect.contains(localPos)){
-        qDebug() << "[MainWindow] Click is within button area";
-        
         int targetId = item->data(ContactDelegate::RoleStatus).toInt();
         bool isFriend = item->data(ContactDelegate::RoleIsFriend).toBool();
-        
-        qDebug() << "[MainWindow] Target ID:" << targetId << "Is friend:" << isFriend << "Current user ID:" << m_currentUserId;
 
         if(!isFriend && targetId != m_currentUserId){
-            qDebug() << "[MainWindow] Sending friend request to:" << targetId;
             AddFriendReq req;
             req.targetId = targetId;
             NetworkManager::instance().sendMsg(MSG_ADD_FRIEND_REQ,QByteArray((char*)&req,sizeof(AddFriendReq)));
             QMessageBox::information(this,"提示","好友请求已发送");
-        } else {
-            qDebug() << "[MainWindow] Cannot send friend request - already friend or self";
         }
         return;
     }
     
-    qDebug() << "[MainWindow] Click is outside button area, proceeding with normal click";
     onContactListClicked(item);
 }
 
@@ -1130,10 +1119,12 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
                 // 增加未读计数
                 for (int i = 0; i < ui->contactList->count(); ++i) {
                     QListWidgetItem *item = ui->contactList->item(i);
-                    int uid = item->data(Qt::UserRole).toInt();
+                    int uid = item->data(ContactDelegate::RoleStatus).toInt();
                     if (uid == srcId) {
-                        int currentCount = item->data(Qt::UserRole + 2).toInt();
-                        item->setData(Qt::UserRole + 2, currentCount + 1);
+                        int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
+                        item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                        // 触发重绘
+                        ui->contactList->viewport()->update();
                         break;
                     }
                 }
@@ -1153,12 +1144,14 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
             // 找到好友列表里对应的 Item，增加未读计数
             for (int i = 0; i < ui->contactList->count(); ++i) {
                 QListWidgetItem *item = ui->contactList->item(i);
-                int uid = item->data(Qt::UserRole).toInt();
+                int uid = item->data(ContactDelegate::RoleStatus).toInt();
                 if (uid == srcId) {
-                    // 取出当前未读数 (UserRole + 2)
-                    int currentCount = item->data(Qt::UserRole + 2).toInt();
+                    // 取出当前未读数 (RoleUnread)
+                    int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
                     // 加 1
-                    item->setData(Qt::UserRole + 2, currentCount + 1);
+                    item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                    // 触发重绘
+                    ui->contactList->viewport()->update();
                     break;
                 }
             }
@@ -1186,10 +1179,12 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
                 // 增加未读计数
                 for (int i = 0; i < ui->contactList->count(); ++i) {
                     QListWidgetItem *item = ui->contactList->item(i);
-                    int uid = item->data(Qt::UserRole).toInt();
+                    int uid = item->data(ContactDelegate::RoleStatus).toInt();
                     if (uid == srcId) {
-                        int currentCount = item->data(Qt::UserRole + 2).toInt();
-                        item->setData(Qt::UserRole + 2, currentCount + 1);
+                        int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
+                        item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                        // 触发重绘
+                        ui->contactList->viewport()->update();
                         break;
                     }
                 }
@@ -1206,12 +1201,14 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
             m_chatHistory[srcId].append(msg);
             for (int i = 0; i < ui->contactList->count(); ++i) {
                 QListWidgetItem *item = ui->contactList->item(i);
-                int uid = item->data(Qt::UserRole).toInt();
+                int uid = item->data(ContactDelegate::RoleStatus).toInt();
                 if (uid == srcId) {
-                    // 取出当前未读数 (UserRole + 2)
-                    int currentCount = item->data(Qt::UserRole + 2).toInt();
+                    // 取出当前未读数 (RoleUnread)
+                    int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
                     // 加 1
-                    item->setData(Qt::UserRole + 2, currentCount + 1);
+                    item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                    // 触发重绘
+                    ui->contactList->viewport()->update();
                     break;
                 }
             }
@@ -1326,6 +1323,7 @@ void MainWindow::onSigSearchUserResult(QList<FriendInfo> list)
         item->setData(ContactDelegate::RoleStatus,info.id);
         item->setData(ContactDelegate::RoleName,QString::fromUtf8(info.userName));
         item->setData(ContactDelegate::RoleIsFriend,isFriend);
+        item->setData(ContactDelegate::RoleUnread, 0); // 初始化未读计数为0
 
         QString status = (info.status == 1)? "[在线]" : "[离线]";
         item->setText(QString("%1 %2").arg(status,QString::fromUtf8(info.userName)));
@@ -1614,15 +1612,30 @@ void MainWindow::onFileReceiveProgress(const QString &fileId, int percent, qint6
 
 void MainWindow::onFileReceiveCompleted(const QString &fileId, const QString &savePath)
 {
-    QMessageBox::information(this, "文件接收完成",
-                             QString("文件已保存到:\n%1").arg(savePath));
     LOG_INFO_FMT("File receive completed:%1",savePath);
+    
+    // 使用QTimer::singleShot延迟显示对话框，避免在信号处理过程中阻塞
+    // 这对于防止程序崩溃非常重要，特别是当信号从非主线程发射时
+    QTimer::singleShot(100, this, [this, fileId, savePath]() {
+        try {
+            QMessageBox::information(this, "文件接收完成",
+                                     QString("文件已保存到:\n%1").arg(savePath));
+        } catch (const std::exception& e) {
+            LOG_ERROR_FMT("Exception in file receive completed dialog: %1", e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in file receive completed dialog");
+        }
+    });
 }
 
 void MainWindow::onFileReceiveFailed(const QString &fileId, const QString &error)
 {
-    QMessageBox::warning(this, "接收失败", "文件接收失败: " + error);
     LOG_ERROR_FMT("File %1 received failed,%2",fileId,error);
+    
+    // 使用QTimer::singleShot延迟显示对话框，避免在信号处理过程中阻塞
+    QTimer::singleShot(100, this, [this, fileId, error]() {
+        QMessageBox::information(this, "接收失败", "文件接收失败: " + error);
+    });
 }
 
 void MainWindow::onGroupListReceived(QList<GroupInfo> list)
@@ -1645,6 +1658,7 @@ void MainWindow::onGroupListReceived(QList<GroupInfo> list)
         item->setData(ContactDelegate::RoleName, QString::fromUtf8(info.groupName));
         item->setData(ContactDelegate::RoleIsFriend, true);  // 群聊也标记为true以允许点击
         item->setData(ContactDelegate::RoleShowTime, isSessionMode); // 设置是否显示时间
+        item->setData(ContactDelegate::RoleUnread, 0); // 初始化未读计数为0
         
         // 设置最后消息时间
         if (info.lastMsgTime > 0) {
@@ -1689,6 +1703,8 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                     if (itemId < 0 && -itemId == groupId) {
                         int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
                         item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                        // 触发重绘
+                        ui->contactList->viewport()->update();
                         break;
                     }
                 }
@@ -1716,6 +1732,8 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                 if (itemId < 0 && -itemId == groupId) {
                     int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
                     item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                    // 触发重绘
+                    ui->contactList->viewport()->update();
                     break;
                 }
             }
@@ -1742,6 +1760,8 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                     if (itemId < 0 && -itemId == groupId) {
                         int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
                         item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                        // 触发重绘
+                        ui->contactList->viewport()->update();
                         break;
                     }
                 }
@@ -1765,6 +1785,8 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                 if (itemId < 0 && -itemId == groupId) {
                     int currentCount = item->data(ContactDelegate::RoleUnread).toInt();
                     item->setData(ContactDelegate::RoleUnread, currentCount + 1);
+                    // 触发重绘
+                    ui->contactList->viewport()->update();
                     break;
                 }
             }

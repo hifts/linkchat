@@ -104,16 +104,22 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     // 4. 【核心】绘制红点 (右侧) - 只在是好友时显示
     if (isFriend && unreadCount > 0) {
-        int dotSize = 8; // 改成小点，只有8像素
+        int dotSize = 12; // 调小红点尺寸
         // 计算红点位置：在 Item 最右侧偏左一点，垂直居中
         int x = rect.right() - dotSize - 8;
         int y = rect.center().y() - dotSize / 2;
         QRect dotRect(x, y, dotSize, dotSize);
 
-        // 画小圆点 - 使用默认颜色
-        painter->setBrush(QColor(0x8e, 0x92, 0x97)); // 灰色小点
+        // 画红色圆点 - 使用醒目的红色
+        painter->setBrush(QColor(0xFF, 0x4D, 0x4F)); // 鲜红色
         painter->setPen(Qt::NoPen);
         painter->drawEllipse(dotRect);
+        
+        // 显示未读数字（包括只有1条消息的情况）
+        painter->setPen(Qt::white);
+        painter->setFont(QFont("Microsoft YaHei", 7, QFont::Bold)); // 调小字体
+        QString countText = unreadCount > 99 ? "99+" : QString::number(unreadCount);
+        painter->drawText(dotRect, Qt::AlignCenter, countText);
     }
 
     // 绘制添加好友按钮(不是好友时才显示添加好友按钮)

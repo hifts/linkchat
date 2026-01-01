@@ -57,6 +57,10 @@ public:
 private:
     // 重命名临时文件为最终文件
     void renameTempFile(const QString &fileId);
+    
+    // 内部实现函数（在锁保护下调用）
+    bool startReceivingInternal(const QString &fileId, const QString &fileName, qint64 fileSize, int senderId, const QString &expectedMD5);
+    
     explicit FileReceiver(QObject *parent = nullptr);
     ~FileReceiver();
 

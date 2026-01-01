@@ -2,6 +2,21 @@
 #include "logger.h"
 
 #include <QDataStream>
+#include <cstring>
+
+// Windows兼容的strnlen实现
+// 提供安全的字符串长度计算函数，避免依赖可能不存在的strnlen
+namespace {
+    // 安全地获取字符串长度，最多检查maxlen个字符
+    inline size_t safe_strnlen(const char* s, size_t maxlen) {
+        if (!s) return 0;
+        size_t len = 0;
+        while (len < maxlen && s[len] != '\0') {
+            len++;
+        }
+        return len;
+    }
+}
 
 NetworkManager &NetworkManager::instance()
 {
@@ -403,7 +418,7 @@ void NetworkManager::onReadyRead()
         case MSG_FILE_TRANSFER_REQ:{
             FileTransferReq *req = (FileTransferReq*)body.data();
             emit sigFileTransferRequest(
-                QString::fromUtf8(req->fileId),
+                QString::fromLatin1(req->fileId, strnlen(req->fileId, sizeof(req->fileId))),
                 QString::fromUtf8(req->fileName),
                 req->fileSize,
                 header->src_id
@@ -416,7 +431,7 @@ void NetworkManager::onReadyRead()
             }
 
             FileTransferResp *resp = (FileTransferResp*)body.data();
-            QString fileId = QString::fromUtf8(resp->fileId);
+            QString fileId = QString::fromLatin1(resp->fileId, strnlen(resp->fileId, sizeof(resp->fileId)));
             bool accepted = (resp->accepted == 1);
 
             emit sigFileTransferResponse(fileId,accepted);
@@ -425,22 +440,40 @@ void NetworkManager::onReadyRead()
         case MSG_FILE_CHUNK:{
             // 解析文件分片
             if (body.size() < (int)sizeof(FileChunk)) {
+                LOG_WARN("Received file chunk with insufficient size");
                 break;
             }
 
             FileChunk *chunk = (FileChunk*)body.data();
-            QString fileId = QString::fromUtf8(chunk->fileId);
+            QString fileId = QString::fromLatin1(chunk->fileId, safe_strnlen(chunk->fileId, sizeof(chunk->fileId)));
             int chunkIndex = chunk->chunkIndex;
             int chunkSize = chunk->chunkSize;
 
-            // 实际的文件数据
-            QByteArray chunkData = body.mid(sizeof(FileChunk),chunkSize);
+            // 验证分片大小的合理性（最大1MB，最小0字节）
+            if (chunkSize > 1024 * 1024 || chunkSize < 0) {
+                LOG_ERROR(QString("Invalid chunk size: %1").arg(chunkSize));
+                break;
+            }
 
-            // 传来的数据分片大小不够实际大小时
+            // 验证分片索引的合理性（最大100万个分片，对应约64GB文件）
+            if (chunkIndex < 0 || chunkIndex > 1000000) {
+                LOG_ERROR(QString("Invalid chunk index: %1").arg(chunkIndex));
+                break;
+            }
+
+            // 验证body大小是否足够包含声明的数据
+            if (body.size() < (int)(sizeof(FileChunk) + chunkSize)) {
+                LOG_ERROR(QString("Body size %1 insufficient for chunk size %2").arg(body.size()).arg(chunkSize));
+                break;
+            }
+
+            // 实际的文件数据
+            QByteArray chunkData = body.mid(sizeof(FileChunk), chunkSize);
+
+            // 验证实际读取的数据大小
             if(chunkData.size() != chunkSize){
-                if (chunkData.size() != chunkSize) {
-                    break;
-                }
+                LOG_ERROR(QString("Chunk data size mismatch: expected %1, got %2").arg(chunkSize).arg(chunkData.size()));
+                break;
             }
 
             // 发送接收分片数据信号
@@ -636,7 +669,7 @@ void NetworkManager::onReadyRead()
                 break;
             }
             FileResumeReq *req = (FileResumeReq*)body.data();
-            QString fileId = QString::fromUtf8(req->fileId);
+            QString fileId = QString::fromLatin1(req->fileId, strnlen(req->fileId, sizeof(req->fileId)));
             emit sigFileResumeReq(fileId, header->src_id);
             break;
         }
@@ -646,7 +679,7 @@ void NetworkManager::onReadyRead()
                 break;
             }
             FileResumeResp *resp = (FileResumeResp*)body.data();
-            QString fileId = QString::fromUtf8(resp->fileId);
+            QString fileId = QString::fromLatin1(resp->fileId, strnlen(resp->fileId, sizeof(resp->fileId)));
             bool canResume = (resp->canResume == 1);
             int totalChunks = resp->totalChunks;
             int receivedChunks = resp->receivedChunks;
@@ -669,8 +702,8 @@ void NetworkManager::onReadyRead()
             }
             // 文件校验由FileReceiver处理，这里只转发信号
             FileVerifyReq *req = (FileVerifyReq*)body.data();
-            QString fileId = QString::fromUtf8(req->fileId);
-            QString fileMD5 = QString::fromUtf8(req->fileMD5);
+            QString fileId = QString::fromLatin1(req->fileId, strnlen(req->fileId, sizeof(req->fileId)));
+            QString fileMD5 = QString::fromLatin1(req->fileMD5, strnlen(req->fileMD5, sizeof(req->fileMD5)));
             // TODO: 实现文件校验逻辑
             break;
         }
@@ -680,7 +713,7 @@ void NetworkManager::onReadyRead()
                 break;
             }
             FileVerifyResp *resp = (FileVerifyResp*)body.data();
-            QString fileId = QString::fromUtf8(resp->fileId);
+            QString fileId = QString::fromLatin1(resp->fileId, strnlen(resp->fileId, sizeof(resp->fileId)));
             bool verified = (resp->verified == 1);
             emit sigFileVerifyResp(fileId, verified);
             break;

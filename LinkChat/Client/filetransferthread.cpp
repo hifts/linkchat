@@ -101,7 +101,7 @@ void FileTransferThread::run()
         }
     }
 
-    // 打开文件
+    // 打开文件（二进制模式）
     if(!file.open(QIODevice::ReadOnly)){
         emit transferFailed("无法打开文件："+file.errorString());
         return;

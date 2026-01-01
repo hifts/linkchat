@@ -5,6 +5,7 @@
 #include "heartbeatmanager.h"
 #include "reconnectmanager.h"
 #include "filetransfermanager.h"
+#include "filereceiver.h"
 #include "configmanager.h"
 #include "configkeys.h"
 
@@ -83,6 +84,9 @@ int main(int argc, char *argv[])
         
         // 设置文件传输管理器的当前用户ID（用于文件加密）
         FileTransferManager::instance().setCurrentUserId(loginDlg.loginUid());
+        
+        // 设置文件接收器的当前用户ID（用于文件解密）
+        FileReceiver::instance().setCurrentUserId(loginDlg.loginUid());
         
         w.show();
 
