@@ -1,7 +1,10 @@
-#include "dbmanager.h"
+﻿#include "dbmanager.h"
 
 #include "tcpserver.h"
 #include "encryptionmanager.h"
+#include "configmanager.h"
+#include "configkeys.h"
+#include "logger.h"
 
 #include <QSqlError>
 #include <QDebug>
@@ -20,19 +23,47 @@ DBManager::DBManager(QObject *parent)
 {}
 
 
-void DBManager::connectToDb()
+bool DBManager::connectToDb()
 {
-    m_db = QSqlDatabase::addDatabase("QMYSQL");
-    m_db.setHostName("127.0.0.1");
-    m_db.setDatabaseName("linkchat");
-    m_db.setUserName("root");
-    m_db.setPassword("root");
-
-    if(!m_db.open()){
-        qCritical()<<"Database connection failed:"<<m_db.lastError().text();
-    }else{
-        qDebug()<<"Database connected!";
+    if (QSqlDatabase::contains("linkchat_connection")) {
+        m_db = QSqlDatabase::database("linkchat_connection");
+    } else {
+        m_db = QSqlDatabase::addDatabase("QMYSQL", "linkchat_connection");
     }
+
+    const QString dbHost = ConfigManager::instance().getString(
+        ConfigKeys::Server::Database::HOST, "127.0.0.1");
+    const int dbPort = ConfigManager::instance().getInt(
+        ConfigKeys::Server::Database::PORT, 3306);
+    const QString dbName = ConfigManager::instance().getString(
+        ConfigKeys::Server::Database::DATABASE, "linkchat");
+    const QString dbUser = ConfigManager::instance().getString(
+        ConfigKeys::Server::Database::USERNAME, "root");
+    const QString dbPassword = ConfigManager::instance().getString(
+        ConfigKeys::Server::Database::PASSWORD, "root");
+
+    m_db.setHostName(dbHost);
+    m_db.setPort(dbPort);
+    m_db.setDatabaseName(dbName);
+    m_db.setUserName(dbUser);
+    m_db.setPassword(dbPassword);
+
+    LOG_INFO(QString("[DB] Connecting MySQL host=%1 port=%2 database=%3 user=%4 password_empty=%5")
+             .arg(dbHost)
+             .arg(dbPort)
+             .arg(dbName)
+             .arg(dbUser)
+             .arg(dbPassword.isEmpty() ? "true" : "false"));
+
+    if (!m_db.open()) {
+        const QString errorText = m_db.lastError().text();
+        qCritical() << "Database connection failed:" << errorText;
+        LOG_ERROR(QString("[DB] Connection failed: %1").arg(errorText));
+        return false;
+    }
+
+    qDebug() << "Database connected!";
+    return true;
 }
 
 bool DBManager::handelRegister(const QString &user, const QString &pwd)
@@ -43,15 +74,12 @@ bool DBManager::handelRegister(const QString &user, const QString &pwd)
 
     QSqlQuery query(m_db);
 
-    // 查重
     query.prepare("select id from t_user where username = ?");
     query.addBindValue(user);
     if(query.exec() && query.next()){
-        // 用户已存在
         return false;
     }
 
-    // 插入用户
     query.prepare("insert into t_user (username,password) values (?,?)");
     query.addBindValue(user);
     query.addBindValue(pwd);
@@ -68,16 +96,13 @@ bool DBManager::handelRegister(const QString &user, const QString &passwordHash,
 
     QSqlQuery query(m_db);
 
-    // 查重
     query.prepare("select id from t_user where username = ?");
     query.addBindValue(user);
     if(query.exec() && query.next()){
-        // 用户已存在
         qWarning() << "[DB] Registration failed: user already exists:" << user;
         return false;
     }
 
-    // 插入用户，包含盐值
     query.prepare("insert into t_user (username, password, salt) values (?, ?, ?)");
     query.addBindValue(user);
     query.addBindValue(passwordHash);
@@ -92,6 +117,31 @@ bool DBManager::handelRegister(const QString &user, const QString &passwordHash,
     return true;
 }
 
+bool DBManager::getUserSalt(const QString &user, QByteArray &outSalt)
+{
+    outSalt.clear();
+    if (user.isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("SELECT salt FROM t_user WHERE username = ?");
+    query.addBindValue(user);
+
+    if (!query.exec() || !query.next()) {
+        return false;
+    }
+
+    const QString saltBase64 = query.value(0).toString();
+    const QByteArray salt = QByteArray::fromBase64(saltBase64.toUtf8());
+    if (salt.isEmpty()) {
+        return false;
+    }
+
+    outSalt = salt;
+    return true;
+}
+
 bool DBManager::handleLogin(const QString &user, const QString &pwd, int &outUid)
 {
     QSqlQuery query(m_db);
@@ -100,7 +150,6 @@ bool DBManager::handleLogin(const QString &user, const QString &pwd, int &outUid
     query.addBindValue(pwd);
 
     if(query.exec() && query.next()){
-        // 用户存在返回用户在数据库中的id
         outUid = query.value(0).toInt();
         return true;
     }
@@ -108,16 +157,15 @@ bool DBManager::handleLogin(const QString &user, const QString &pwd, int &outUid
     return false;
 }
 
-bool DBManager::handleLogin(const QString &user, const QString &pwd, int &outUid,
+bool DBManager::handleLogin(const QString &user, const QString &passwordHashBase64, int &outUid,
                            QByteArray &outSalt, QByteArray &outPasswordHash)
 {
-    if (user.isEmpty() || pwd.isEmpty()) {
-        qWarning() << "[DB] Empty username or password for login";
+    if (user.isEmpty() || passwordHashBase64.isEmpty()) {
+        qWarning() << "[DB] Empty username or passwordHash for login";
         return false;
     }
 
     QSqlQuery query(m_db);
-    // 查询用户的ID、密码哈希值和盐值
     query.prepare("SELECT id, password, salt FROM t_user WHERE username = ?");
     query.addBindValue(user);
 
@@ -127,46 +175,44 @@ bool DBManager::handleLogin(const QString &user, const QString &pwd, int &outUid
     }
 
     if (!query.next()) {
-        // 用户不存在
         qWarning() << "[DB] User not found:" << user;
         return false;
     }
 
-    // 读取数据库中的数据
     int userId = query.value(0).toInt();
     QString storedPasswordHash = query.value(1).toString();
     QString saltBase64 = query.value(2).toString();
 
-    // 检查盐值是否存在
     if (saltBase64.isNull() || saltBase64.isEmpty()) {
         qWarning() << "[DB] User has no salt value, login denied";
         return false;
     }
 
-    // 解码盐值
     QByteArray salt = QByteArray::fromBase64(saltBase64.toUtf8());
     if (salt.isEmpty()) {
         qCritical() << "[DB] Failed to decode salt from database";
         return false;
     }
 
-    // 解码存储的哈希值
     QByteArray storedHash = QByteArray::fromBase64(storedPasswordHash.toUtf8());
     if (storedHash.isEmpty()) {
         qCritical() << "[DB] Failed to decode password hash from database";
         return false;
     }
 
-    // 使用EncryptionManager验证密码
-    bool verified = EncryptionManager::instance().verifyPassword(pwd, salt, storedHash);
-    
-    if (verified) {
+    const QByteArray clientHash = QByteArray::fromBase64(passwordHashBase64.toUtf8());
+    if (clientHash.isEmpty()) {
+        qWarning() << "[DB] Failed to decode client password hash";
+        return false;
+    }
+
+    if (clientHash == storedHash) {
         outUid = userId;
         outSalt = salt;
         outPasswordHash = storedHash;
         return true;
     } else {
-        qWarning() << "[DB] Login failed: incorrect password for user:" << user;
+        qWarning() << "[DB] Login failed: incorrect password hash for user:" << user;
         return false;
     }
 }
@@ -176,7 +222,6 @@ QList<FriendInfo> DBManager::getFriendList(int uid)
     QList<FriendInfo> list;
 
     QSqlQuery query(m_db);
-    // 联合查询好友信息和最后一条消息的时间
     query.prepare(
         "SELECT u.id, u.username, "
         "COALESCE(MAX(h.send_time), 0) as last_msg_time "
@@ -199,11 +244,9 @@ QList<FriendInfo> DBManager::getFriendList(int uid)
             QString name = query.value(1).toString();
             strncpy(info.userName,name.toStdString().c_str(),32);
             
-            // 获取最后消息时间（Unix时间戳）
             QDateTime lastMsgTime = query.value(2).toDateTime();
             info.lastMsgTime = lastMsgTime.isValid() ? lastMsgTime.toSecsSinceEpoch() : 0;
 
-            // 判断用户是否在线
             bool online = TcpServer::instance().isOnline(info.id);
 
             info.status = online? 1 : 0;
@@ -217,7 +260,6 @@ QList<int> DBManager::getFriendIds(int uid)
 {
     QList<int> list;
     QSqlQuery query(m_db);
-    // 只需要查 friend_id 即可
     query.prepare("SELECT friend_id FROM t_friend WHERE user_id = ?");
     query.addBindValue(uid);
 
@@ -240,7 +282,7 @@ QList<FriendInfo> DBManager::searchUsers(const QString &keyword, int currentId)
     QString sql = "select id,username from t_user where username like ? and id != ?";
 
     query.prepare(sql);
-    query.addBindValue(QString("%%1%").arg(keyword));
+    query.addBindValue("%" + keyword + "%");
     query.addBindValue(currentId);
 
     if(query.exec()){
@@ -275,7 +317,6 @@ bool DBManager::addFriend(int userId, int friendId)
 
     QSqlQuery query(m_db);
 
-    // 开启事务
     if (!m_db.transaction()) {
         qCritical() << "Failed to start transaction";
         return false;
@@ -301,11 +342,9 @@ bool DBManager::addFriend(int userId, int friendId)
     }
 
     if(success){
-        // 提交事务
         m_db.commit();
         return true;
     }else{
-        // 回滚到插入数据之前
         m_db.rollback();
         return false;
     }
@@ -325,7 +364,6 @@ bool DBManager::deleteFriend(int userId, int friendId)
 
     QSqlQuery query(m_db);
 
-    // 开启事务
     if (!m_db.transaction()) {
         qCritical() << "Failed to start transaction";
         return false;
@@ -333,7 +371,6 @@ bool DBManager::deleteFriend(int userId, int friendId)
 
     bool success = true;
     
-    // 删除双向好友关系
     query.prepare("DELETE FROM t_friend WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)");
     query.addBindValue(userId);
     query.addBindValue(friendId);
@@ -345,7 +382,6 @@ bool DBManager::deleteFriend(int userId, int friendId)
         qCritical() << "Delete friend failed:" << query.lastError().text();
     }
 
-    // 同时删除相关的好友请求记录（双向）
     if (success) {
         query.clear();
         query.prepare("DELETE FROM t_friend_request WHERE "
@@ -358,19 +394,16 @@ bool DBManager::deleteFriend(int userId, int friendId)
         
         if (!query.exec()) {
             qWarning() << "Failed to delete friend request records:" << query.lastError().text();
-            // 不影响删除好友的成功，只是警告
         } else {
             qDebug() << "Deleted friend request records between" << userId << "and" << friendId;
         }
     }
 
     if (success) {
-        // 提交事务
         m_db.commit();
         qDebug() << "Successfully deleted friendship between" << userId << "and" << friendId;
         return true;
     } else {
-        // 回滚事务
         m_db.rollback();
         return false;
     }
@@ -380,14 +413,11 @@ void DBManager::saveFriendRequest(int requesterId, const QString &requesterName,
 {
     QSqlQuery query(m_db);
     
-    // 先删除旧的请求记录（如果存在），避免重复
-    // 这样可以支持删除好友后重新添加的场景
     query.prepare("DELETE FROM t_friend_request WHERE requester_id = ? AND target_id = ?");
     query.addBindValue(requesterId);
     query.addBindValue(targetId);
-    query.exec(); // 忽略删除结果，可能本来就没有旧记录
+    query.exec();
     
-    // 插入新的好友请求
     query.clear();
     query.prepare("insert into t_friend_request (requester_id,target_id,requester_name,request_time) values (?,?,?,NOW())");
     query.addBindValue(requesterId);
@@ -424,7 +454,6 @@ void DBManager::markRequestProcessed(int requesterId, int targetId,bool accepted
 {
     QSqlQuery q(m_db);
 
-    // 1=同意，2=拒绝
     int status = accepted? 1 : 2;
 
     q.prepare("UPDATE t_friend_request SET status = ? "
@@ -513,7 +542,6 @@ QList<QPair<int, QByteArray>> DBManager::getAndClearOfflineMessages(int receiver
     QList<QPair<int,QByteArray>> offlineMsgList;
     QSqlQuery query(m_db);
 
-    // 查询消息
     query.prepare("select sender_id,content from t_offline_msg where receiver_id = ? ORDER BY create_time ASC");
     query.addBindValue(receiverId);
 
@@ -525,7 +553,6 @@ QList<QPair<int, QByteArray>> DBManager::getAndClearOfflineMessages(int receiver
         }
     }
 
-    // 如果有消息，查询完后删除这些消息
     if(!offlineMsgList.isEmpty()){
         QSqlQuery delQuery(m_db);
         delQuery.prepare("delete from t_offline_msg where receiver_id = ?");
@@ -536,7 +563,6 @@ QList<QPair<int, QByteArray>> DBManager::getAndClearOfflineMessages(int receiver
     return offlineMsgList;
 }
 
-// ============ 群聊相关实现 ============
 
 int DBManager::createGroup(const QString &groupName, int creatorId)
 {
@@ -546,13 +572,11 @@ int DBManager::createGroup(const QString &groupName, int creatorId)
 
     QSqlQuery query(m_db);
 
-    // 开启事务
     if (!m_db.transaction()) {
         qCritical() << "Failed to start transaction for createGroup";
         return -1;
     }
 
-    // 创建群
     query.prepare("INSERT INTO t_groups (group_name, creator_id) VALUES (?, ?)");
     query.addBindValue(groupName);
     query.addBindValue(creatorId);
@@ -565,7 +589,6 @@ int DBManager::createGroup(const QString &groupName, int creatorId)
 
     int groupId = query.lastInsertId().toInt();
 
-    // 添加创建者为群主
     query.clear();
     query.prepare("INSERT INTO t_group_members (group_id, user_id, role) VALUES (?, ?, 2)");
     query.addBindValue(groupId);
@@ -577,7 +600,6 @@ int DBManager::createGroup(const QString &groupName, int creatorId)
         return -1;
     }
 
-    // 创建群成功提交事务
     m_db.commit();
     
     return groupId;
@@ -613,7 +635,6 @@ QList<GroupInfo> DBManager::getGroupList(int userId)
             strncpy(info.creatorName, creatorName.toUtf8().constData(), 31);
             info.creatorName[31] = '\0';
             
-            // 获取最后消息时间（Unix时间戳）
             QDateTime lastMsgTime = query.value(4).toDateTime();
             info.lastMsgTime = lastMsgTime.isValid() ? lastMsgTime.toSecsSinceEpoch() : 0;
             
@@ -703,12 +724,11 @@ QList<int> DBManager::getGroupMemberIds(int groupId)
 
 void DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &content)
 {
-    // 存储加密的群消息内容（服务器不解密，直接存储密文）
     QSqlQuery query(m_db);
     query.prepare("INSERT INTO t_group_messages (group_id, sender_id, content) VALUES (?, ?, ?)");
     query.addBindValue(groupId);
     query.addBindValue(senderId);
-    query.addBindValue(content);  // content 是加密的密文
+    query.addBindValue(content);
 
     if (!query.exec()) {
         qCritical() << "Save group message failed:" << query.lastError().text();
@@ -717,7 +737,6 @@ void DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &co
 
 QList<std::tuple<int, QString, QByteArray, quint64>> DBManager::getGroupChatHistory(int groupId, int limit)
 {
-    // 返回群聊历史消息（content 是加密的密文，客户端负责解密）
     QList<std::tuple<int, QString, QByteArray, quint64>> list;
     QSqlQuery query(m_db);
 
@@ -736,7 +755,7 @@ QList<std::tuple<int, QString, QByteArray, quint64>> DBManager::getGroupChatHist
         while (query.next()) {
             int senderId = query.value(0).toInt();
             QString senderName = query.value(1).toString();
-            QByteArray content = query.value(2).toByteArray();  // 加密的密文
+            QByteArray content = query.value(2).toByteArray();
             quint64 timestamp = query.value(3).toULongLong();
             list.append(std::make_tuple(senderId, senderName, content, timestamp));
         }
@@ -747,13 +766,12 @@ QList<std::tuple<int, QString, QByteArray, quint64>> DBManager::getGroupChatHist
 
 void DBManager::saveGroupOfflineMessage(int groupId, int senderId, int receiverId, const QByteArray &content)
 {
-    // 存储加密的群离线消息（服务器不解密，直接存储密文）
     QSqlQuery query(m_db);
     query.prepare("INSERT INTO t_group_offline_msg (group_id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)");
     query.addBindValue(groupId);
     query.addBindValue(senderId);
     query.addBindValue(receiverId);
-    query.addBindValue(content);  // content 是加密的密文
+    query.addBindValue(content);
 
     if (!query.exec()) {
         qCritical() << "Save group offline message failed:" << query.lastError().text();
@@ -762,11 +780,9 @@ void DBManager::saveGroupOfflineMessage(int groupId, int senderId, int receiverI
 
 QList<std::tuple<int, int, QString, QByteArray>> DBManager::getAndClearGroupOfflineMessages(int receiverId)
 {
-    // 返回群离线消息（content 是加密的密文，客户端负责解密）
     QList<std::tuple<int, int, QString, QByteArray>> list;
     QSqlQuery query(m_db);
 
-    // 查询离线消息并关联发送者用户名
     query.prepare(
         "SELECT o.group_id, o.sender_id, u.username, o.content "
         "FROM t_group_offline_msg o "
@@ -781,12 +797,11 @@ QList<std::tuple<int, int, QString, QByteArray>> DBManager::getAndClearGroupOffl
             int groupId = query.value(0).toInt();
             int senderId = query.value(1).toInt();
             QString senderName = query.value(2).toString();
-            QByteArray content = query.value(3).toByteArray();  // 加密的密文
+            QByteArray content = query.value(3).toByteArray();
             list.append(std::make_tuple(groupId, senderId, senderName, content));
         }
     }
 
-    // 删除已查询的离线消息
     if (!list.isEmpty()) {
         QSqlQuery delQuery(m_db);
         delQuery.prepare("DELETE FROM t_group_offline_msg WHERE receiver_id = ?");

@@ -1,4 +1,4 @@
-#include "filereceiver.h"
+﻿#include "filereceiver.h"
 #include "transferstatemanager.h"
 #include "logger.h"
 #include "encryptionmanager.h"
@@ -6,10 +6,42 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
-#include <QTimer>
-#include <QThread>
 #include <QFileInfo>
+#include <QThread>
+#include <QTimer>
 #include <qdebug.h>
+
+namespace {
+constexpr qint64 kFileChunkSize = 64 * 1024;
+
+void destroyReceivingInfo(ReceivingFileInfo *info)
+{
+    if (!info) {
+        return;
+    }
+
+    if (info->file) {
+        if (info->file->isOpen()) {
+            info->file->close();
+        }
+        delete info->file;
+        info->file = nullptr;
+    }
+
+    delete info;
+}
+
+bool isExecutableLikeFile(const QString &filePath)
+{
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    return suffix == "exe" ||
+           suffix == "dll" ||
+           suffix == "bat" ||
+           suffix == "cmd" ||
+           suffix == "com" ||
+           suffix == "scr";
+}
+}
 
 FileReceiver &FileReceiver::instance()
 {
@@ -141,7 +173,9 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
             }
 
             info->receivedChunks = saveState.completedChunks.size();
-            info->receivedSize = saveState.completedChunks.size() * 64 * 1024;
+            info->receivedSize = qMin<qint64>(
+                fileSize,
+                static_cast<qint64>(saveState.completedChunks.size()) * kFileChunkSize);
 
             LOG_INFO(QString("Resuming file receiving:%1,completed chunks:%2/%3")
                          .arg(fileName).arg(info->receivedChunks).arg(saveState.totalChunks));
@@ -185,11 +219,12 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
         file = new QFile(tempPath);
         
         // 尝试以二进制模式打开文件
-        if(!file->open(QIODevice::WriteOnly)){
-            LOG_ERROR_FMT("Failed to create temp file:%1, error: %2", tempPath, file->errorString());
+        if(!file->open(QIODevice::ReadWrite)){
+            const QString fileError = file->errorString();
+            LOG_ERROR_FMT("Failed to create temp file:%1, error: %2", tempPath, fileError);
             delete file;
             delete info;
-            emit receiveFailed(fileId, QString("无法创建临时文件: %1").arg(file->errorString()));
+            emit receiveFailed(fileId, QString("无法创建临时文件: %1").arg(fileError));
             return false;
         }
 
@@ -240,7 +275,8 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
     state.fileSize = fileSize;
     state.friendId = 0;         // 接收方暂不记录friendId
     state.totalChunks = info->totalChunks;
-    state.completedChunks = QSet<int>(info->receivedChunkMap.keys().begin(), info->receivedChunkMap.keys().end());
+    const QList<int> completedChunkKeys = info->receivedChunkMap.keys();
+    state.completedChunks = QSet<int>(completedChunkKeys.cbegin(), completedChunkKeys.cend());
     state.isSending = false;
 
     TransferStateManager::instance().saveTransferState(state);
@@ -249,326 +285,135 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
 
 bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QByteArray &data)
 {
-    // 在最外层添加异常处理，防止整个函数执行过程中的任何异常导致程序崩溃
     try {
+        QString errorMessage;
         QString tempPath;
         QString savePath;
-        QString expectedMD5;  // 期望的MD5值
+        QString expectedMD5;
         bool isCompleted = false;
+        int progressPercent = 0;
+        qint64 receivedSize = 0;
+        qint64 totalSize = 0;
 
         {
             QMutexLocker locker(&m_mutex);
 
-        // 检查任务是否存在(不存在则不能接收数据)
-        if (!m_receivingFiles.contains(fileId)) {
-            LOG_ERROR_FMT("File not found:%1,cannot received file",fileId);
-            return false;
-        }
-
-        ReceivingFileInfo *info = m_receivingFiles[fileId];
-
-        // 检查info指针是否有效
-        if(info == nullptr){
-            LOG_ERROR_FMT("ReceivingFileInfo is null for fileId: %1", fileId);
-            m_receivingFiles.remove(fileId);
-            emit receiveFailed(fileId, "接收任务信息无效");
-            return false;
-        }
-
-        // 检查文件对象是否有效
-        if(info->file == nullptr){
-            LOG_ERROR_FMT("File object is null for fileId: %1", fileId);
-            // 清理资源
-            m_receivingFiles.remove(fileId);
-            delete info;
-            QString errorMsg = "文件对象无效";
-            // 锁在这里自动释放
-            emit receiveFailed(fileId, errorMsg);
-            return false;
-        }
-
-        // 验证分片索引的合理性
-        if (chunkIndex < 0 || chunkIndex >= info->totalChunks) {
-            LOG_ERROR(QString("Invalid chunk index %1 for file %2 (total chunks: %3)")
-                     .arg(chunkIndex).arg(fileId).arg(info->totalChunks));
-            emit receiveFailed(fileId, "分片索引无效");
-            return false;
-        }
-
-        // 检查分片是否已经接收
-        if(info->receivedChunkMap.contains(chunkIndex)){
-            LOG_WARN_FMT("Chunk already received:%1",chunkIndex);
-            return true; // 重复分片，直接忽略
-        }
-
-        // 验证数据大小的合理性（最大1MB）
-        if (data.size() > 1024 * 1024) {
-            LOG_ERROR(QString("Chunk data too large: %1 bytes").arg(data.size()));
-            emit receiveFailed(fileId, "分片数据过大");
-            return false;
-        }
-
-        // 解密文件分片（如果有发送者ID）
-        QByteArray decryptedData = data;
-        LOG_DEBUG(QString("[FileReceiver] Processing chunk %1, original size: %2").arg(chunkIndex).arg(data.size()));
-        
-        if (info->senderId > 0 && m_currentUserId > 0) {
-            LOG_DEBUG(QString("[FileReceiver] Attempting to decrypt chunk %1 for users %2 and %3")
-                     .arg(chunkIndex).arg(m_currentUserId).arg(info->senderId));
-            
-            // 获取聊天密钥（使用当前用户ID和发送者ID）
-            QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, info->senderId);
-            
-            if (key.isEmpty()) {
-                LOG_ERROR_FMT("[FileReceiver] Failed to get encryption key for users %1 and %2", m_currentUserId, info->senderId);
-                QString errorMsg = "无法获取解密密钥";
-                // 清理资源
-                if(info->file){
-                    info->file->close();
-                    delete info->file;
-                }
-                delete info;
-                m_receivingFiles.remove(fileId);
-                // 锁在这里自动释放
-                emit receiveFailed(fileId, errorMsg);
+            if (!m_receivingFiles.contains(fileId)) {
+                LOG_ERROR_FMT("File not found:%1,cannot received file",fileId);
                 return false;
             }
-            
-            LOG_DEBUG(QString("[FileReceiver] Got encryption key, size: %1").arg(key.size()));
-            
-            // 解密分片数据
-            decryptedData = EncryptionManager::instance().xorEncryptDecrypt(data, key);
-            
-            LOG_DEBUG(QString("[FileReceiver] Decryption completed: input=%1, output=%2")
-                     .arg(data.size()).arg(decryptedData.size()));
-            
-            LOG_DEBUG(QString("[FileReceiver] Decrypted chunk %1: encrypted size=%2, decrypted size=%3")
-                     .arg(chunkIndex).arg(data.size()).arg(decryptedData.size()));
-        } else {
-            LOG_DEBUG(QString("[FileReceiver] No decryption needed for chunk %1 (senderId=%2, currentUserId=%3)")
-                     .arg(chunkIndex).arg(info->senderId).arg(m_currentUserId));
-        }
 
-        // 写入文件（使用解密后的数据）
-        // 使用64位算术避免溢出
-        quint64 chunkSize64 = 64 * 1024;
-        quint64 offset = static_cast<quint64>(chunkIndex) * chunkSize64;
-        
-        LOG_DEBUG(QString("[FileReceiver] Preparing to write chunk %1: offset=%2, size=%3")
-                 .arg(chunkIndex).arg(offset).arg(decryptedData.size()));
-        
-        // 验证偏移量是否合理（避免超出文件大小）
-        if (offset > static_cast<quint64>(info->totalSize)) {
-            LOG_ERROR(QString("File offset %1 exceeds file size %2 for chunk %3")
-                     .arg(offset).arg(info->totalSize).arg(chunkIndex));
-            QString errorMsg = "文件偏移量超出范围";
-            // 清理资源
-            if(info->file){
-                info->file->close();
-                delete info->file;
-            }
-            delete info;
-            m_receivingFiles.remove(fileId);
-            // 锁在这里自动释放
-            emit receiveFailed(fileId, errorMsg);
-            return false;
-        }
-        
-        LOG_DEBUG(QString("[FileReceiver] Seeking to offset %1").arg(offset));
-        
-        if(!info->file->seek(offset)){
-            LOG_ERROR(QString("Failed to seek to offset %1 for chunk %2: %3").arg(offset).arg(chunkIndex).arg(info->file->errorString()));
-            QString errorMsg = QString("文件定位失败: %1").arg(info->file->errorString());
-            // 清理资源
-            if(info->file){
-                info->file->close();
-                delete info->file;
-            }
-            delete info;
-            m_receivingFiles.remove(fileId);
-            // 锁在这里自动释放
-            emit receiveFailed(fileId, errorMsg);
-            return false;
-        }
-
-        LOG_DEBUG(QString("[FileReceiver] Writing %1 bytes to file").arg(decryptedData.size()));
-
-        // 添加异常处理，防止写入过程中的崩溃
-        qint64 written = 0;
-        try {
-            written = info->file->write(decryptedData);
-        } catch (const std::exception& e) {
-            LOG_ERROR(QString("Exception during file write for chunk %1: %2").arg(chunkIndex).arg(e.what()));
-            QString errorMsg = QString("写入文件时发生异常: %1").arg(e.what());
-            // 清理资源
-            if(info->file){
-                info->file->close();
-                delete info->file;
-            }
-            delete info;
-            m_receivingFiles.remove(fileId);
-            // 锁在这里自动释放
-            emit receiveFailed(fileId, errorMsg);
-            return false;
-        } catch (...) {
-            LOG_ERROR(QString("Unknown exception during file write for chunk %1").arg(chunkIndex));
-            QString errorMsg = "写入文件时发生未知异常";
-            // 清理资源
-            if(info->file){
-                info->file->close();
-                delete info->file;
-            }
-            delete info;
-            m_receivingFiles.remove(fileId);
-            // 锁在这里自动释放
-            emit receiveFailed(fileId, errorMsg);
-            return false;
-        }
-        
-        LOG_DEBUG(QString("[FileReceiver] Write completed: requested=%1, written=%2")
-                 .arg(decryptedData.size()).arg(written));
-        
-        if(written != (qint64)decryptedData.size()){
-            // 写入字节数不等于实际字节数时
-            LOG_ERROR(QString("Failed to write chunk %1: expected=%2, written=%3, error=%4")
-                     .arg(chunkIndex).arg(decryptedData.size()).arg(written).arg(info->file->errorString()));
-            QString errorMsg = QString("写入文件失败: %1").arg(info->file->errorString());
-            // 清理资源
-            if(info->file){
-                info->file->close();
-                delete info->file;
-            }
-            delete info;
-            m_receivingFiles.remove(fileId);
-            // 锁在这里自动释放
-            emit receiveFailed(fileId, errorMsg);
-            return false;
-        }
-
-        LOG_DEBUG(QString("[FileReceiver] Successfully wrote chunk %1").arg(chunkIndex));
-
-        // 强制刷新文件缓冲区，确保数据写入磁盘
-        // 添加异常处理，防止刷新过程中的崩溃
-        try {
-            if (!info->file->flush()) {
-                LOG_ERROR(QString("Failed to flush file buffer for chunk %1: %2").arg(chunkIndex).arg(info->file->errorString()));
-                QString errorMsg = QString("文件缓冲区刷新失败: %1").arg(info->file->errorString());
-                // 清理资源
-                if(info->file){
-                    info->file->close();
-                    delete info->file;
-                }
-                delete info;
+            ReceivingFileInfo *info = m_receivingFiles[fileId];
+            if (info == nullptr) {
                 m_receivingFiles.remove(fileId);
-                // 锁在这里自动释放
-                emit receiveFailed(fileId, errorMsg);
-                return false;
+                errorMessage = "接收任务信息无效";
+            } else if (info->file == nullptr) {
+                m_receivingFiles.remove(fileId);
+                destroyReceivingInfo(info);
+                errorMessage = "文件对象无效";
+            } else if (info->totalChunks <= 0 || info->totalSize <= 0) {
+                m_receivingFiles.remove(fileId);
+                destroyReceivingInfo(info);
+                errorMessage = "接收状态无效";
+            } else if (chunkIndex < 0 || chunkIndex >= info->totalChunks) {
+                errorMessage = "分片索引无效";
+            } else if (info->receivedChunkMap.contains(chunkIndex)) {
+                return true;
+            } else if (data.isEmpty() || data.size() > 1024 * 1024) {
+                errorMessage = "分片数据无效";
+            } else {
+                QByteArray decryptedData = data;
+                if (info->senderId > 0 && m_currentUserId > 0) {
+                    const QByteArray key = EncryptionManager::instance().getCachedChatKey(
+                        m_currentUserId, info->senderId);
+                    if (key.isEmpty()) {
+                        errorMessage = "无法获取解密密钥";
+                    } else {
+                        decryptedData = EncryptionManager::instance().xorEncryptDecrypt(data, key);
+                    }
+                }
+
+                const qint64 offset = static_cast<qint64>(chunkIndex) * kFileChunkSize;
+                const qint64 remaining = info->totalSize - offset;
+                const qint64 expectedChunkSize = qMin<qint64>(kFileChunkSize, remaining);
+
+                if (errorMessage.isEmpty() && (remaining <= 0 || expectedChunkSize <= 0)) {
+                    errorMessage = "文件偏移量超出范围";
+                }
+                if (errorMessage.isEmpty() && decryptedData.size() != expectedChunkSize) {
+                    LOG_ERROR(QString("Chunk size mismatch for file %1, chunk %2: expected=%3, actual=%4")
+                              .arg(fileId).arg(chunkIndex).arg(expectedChunkSize).arg(decryptedData.size()));
+                    errorMessage = "分片大小异常";
+                }
+                if (errorMessage.isEmpty() && !info->file->seek(offset)) {
+                    errorMessage = QString("文件定位失败: %1").arg(info->file->errorString());
+                }
+                if (errorMessage.isEmpty()) {
+                    const qint64 written = info->file->write(decryptedData);
+                    if (written != decryptedData.size()) {
+                        errorMessage = QString("写入文件失败: %1").arg(info->file->errorString());
+                    } else if (!info->file->flush()) {
+                        errorMessage = QString("文件缓冲区刷新失败: %1").arg(info->file->errorString());
+                    } else {
+                        info->receivedChunkMap[chunkIndex] = true;
+                        info->receivedChunks = info->receivedChunkMap.size();
+                        info->receivedSize += decryptedData.size();
+                        progressPercent = (info->receivedChunks * 100) / info->totalChunks;
+                        receivedSize = info->receivedSize;
+                        totalSize = info->totalSize;
+
+                        TransferStateManager::instance().markChunkCompleted(fileId, chunkIndex);
+
+                        if (info->receivedChunkMap.size() >= info->totalChunks) {
+                            info->file->flush();
+                            info->file->close();
+                            tempPath = info->tempPath;
+                            savePath = info->savePath;
+                            expectedMD5 = info->expectedMD5;
+                            isCompleted = true;
+                            TransferStateManager::instance().removeTransferState(fileId);
+                            m_receivingFiles.remove(fileId);
+                            info->file = nullptr;
+                            delete info;
+                        }
+                    }
+                }
+
+                if (!errorMessage.isEmpty()) {
+                    m_receivingFiles.remove(fileId);
+                    destroyReceivingInfo(info);
+                }
             }
-        } catch (const std::exception& e) {
-            LOG_ERROR(QString("Exception during file flush for chunk %1: %2").arg(chunkIndex).arg(e.what()));
-            // 刷新失败不一定是致命错误，继续执行
-            LOG_WARN("File flush failed but continuing");
-        } catch (...) {
-            LOG_ERROR(QString("Unknown exception during file flush for chunk %1").arg(chunkIndex));
-            // 刷新失败不一定是致命错误，继续执行
-            LOG_WARN("File flush failed but continuing");
         }
 
-        // 更新接收信息（使用解密后的数据大小）
-        info->receivedChunkMap[chunkIndex] = true;
-        info->receivedChunks++;
-        info->receivedSize += decryptedData.size();
-
-        // 标记分片已完成（每次都要更新内存状态，内部会每10个分片才持久化一次）
-        TransferStateManager::instance().markChunkCompleted(fileId, chunkIndex);
-
-        // 计算进度(收到的/总共的)
-        int percent = info->totalChunks > 0 ? (info->receivedChunks * 100) / info->totalChunks : 0;
-
-        // 每接收10个分片打印一次日志
-        if (chunkIndex % 10 == 0) {
-            LOG_INFO(QString("Received chunk %1 / %2 (%3%)").arg(chunkIndex).arg(info->totalChunks).arg(percent));
+        if (!errorMessage.isEmpty()) {
+            emit receiveFailed(fileId, errorMessage);
+            return false;
         }
 
-        // 发射进度信号，添加异常处理防止崩溃
         try {
-            emit receiveProgress(fileId,percent,info->receivedSize,info->totalSize);
+            emit receiveProgress(fileId, progressPercent, receivedSize, totalSize);
         } catch (const std::exception& e) {
             LOG_ERROR_FMT("Exception in receiveProgress signal handler: %1", e.what());
         } catch (...) {
             LOG_ERROR("Unknown exception in receiveProgress signal handler");
         }
 
-        // 检查是否接收完成（使用receivedChunkMap.size()确保准确性，避免重复分片影响判断）
-        if(info->receivedChunkMap.size() >= info->totalChunks){
-            // 添加异常处理，防止关闭文件时的崩溃
-            try {
-                // 确保所有数据都写入磁盘
-                if (!info->file->flush()) {
-                    LOG_WARN(QString("Failed to flush file before close: %1").arg(info->file->errorString()));
-                }
-                
-                // 关闭文件
-                info->file->close();
-            } catch (const std::exception& e) {
-                LOG_ERROR(QString("Exception during file close: %1").arg(e.what()));
-                // 即使关闭失败，也继续处理，因为文件可能已经写入
-            } catch (...) {
-                LOG_ERROR("Unknown exception during file close");
-                // 即使关闭失败，也继续处理
-            }
-
-            // 保存需要的信息，因为后面会删除info
-            tempPath = info->tempPath;
-            savePath = info->savePath;
-            expectedMD5 = info->expectedMD5;  // 保存期望的MD5值
-            isCompleted = true;
-
-            // 清理接收任务（在锁内完成）
-            try {
-                TransferStateManager::instance().removeTransferState(fileId);
-            } catch (const std::exception& e) {
-                LOG_ERROR(QString("Exception during transfer state removal: %1").arg(e.what()));
-            } catch (...) {
-                LOG_ERROR("Unknown exception during transfer state removal");
-            }
-            
-            delete info->file;
-            info->file = nullptr; // 防止重复删除
-            delete info;
-            m_receivingFiles.remove(fileId);
+        if (chunkIndex % 10 == 0) {
+            LOG_INFO(QString("Received chunk %1 for file %2 (%3%)")
+                     .arg(chunkIndex).arg(fileId).arg(progressPercent));
         }
-    } // 锁在这里自动释放
 
-    // 在锁外进行文件操作和信号发射，避免死锁
-    if(isCompleted){
-        // 重命名临时文件为最终文件（不需要锁，因为已经从map中移除了）
-        // 添加异常处理，防止文件操作导致崩溃
+        if(isCompleted){
         try {
             if(!tempPath.isEmpty() && tempPath != savePath && QFile::exists(tempPath)){
-            // 检测是否为可执行文件
-            QFileInfo fileInfo(savePath);
-            bool isExecutable = (fileInfo.suffix().toLower() == "exe" || 
-                                fileInfo.suffix().toLower() == "dll" ||
-                                fileInfo.suffix().toLower() == "bat" ||
-                                fileInfo.suffix().toLower() == "cmd" ||
-                                fileInfo.suffix().toLower() == "com" ||
-                                fileInfo.suffix().toLower() == "scr");
-            
-            // 对于可执行文件，需要特别小心处理
-            // Windows防病毒软件可能会在文件重命名为.exe时进行扫描，导致程序被终止
-            // 因此需要添加延迟和异常处理
-            
-            // 等待一小段时间，确保文件句柄完全释放
-            // 对于可执行文件，需要更长的延迟
+            bool isExecutable = isExecutableLikeFile(savePath);
             if(isExecutable){
-                QThread::msleep(500); // 可执行文件需要更长的延迟
-                LOG_DEBUG("Executable file detected, using longer delay");
+                QThread::msleep(500);
             } else {
-                QThread::msleep(100); // 普通文件较短的延迟即可
+                QThread::msleep(100);
             }
             
-            // 如果最终文件已存在，先删除
             if(QFile::exists(savePath)){
                 if(!QFile::remove(savePath)){
                     LOG_WARN_FMT("Failed to remove existing file: %1, will try to overwrite", savePath);
@@ -583,11 +428,8 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                     renameSuccess = true;
                     LOG_INFO_FMT("Temp file renamed: %1 -> %2", tempPath, savePath);
                 } else {
-                    // 如果直接重命名失败（可能是防病毒软件干扰），尝试复制+删除的方式
                     LOG_WARN_FMT("Direct rename failed, trying copy+delete method: %1 -> %2", tempPath, savePath);
                     
-                    // 再次等待，给系统一些时间
-                    // 对于可执行文件，需要更长的延迟
                     if(isExecutable){
                         QThread::msleep(500);
                     } else {
@@ -601,21 +443,16 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                     bool copySuccess = false;
                     try {
                         if(sourceFile.open(QIODevice::ReadOnly) && destFile.open(QIODevice::WriteOnly)){
-                            // 分块复制，避免大文件一次性加载到内存
-                            const qint64 bufferSize = 64 * 1024; // 64KB
+                            const qint64 bufferSize = kFileChunkSize;
                             qint64 totalBytes = sourceFile.size();
                             qint64 bytesCopied = 0;
                             
                             while(bytesCopied < totalBytes){
                                 QByteArray buffer = sourceFile.read(bufferSize);
-                                
-                                // 检查读取是否成功
                                 if(buffer.isEmpty() && !sourceFile.atEnd()){
                                     LOG_ERROR("Failed to read from source file during copy");
                                     break;
                                 }
-                                
-                                // 如果已经到达文件末尾，但还有数据，继续处理
                                 if(buffer.isEmpty() && sourceFile.atEnd()){
                                     break;
                                 }
@@ -628,39 +465,30 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                                 }
                                 
                                 bytesCopied += written;
-                                
-                                // 确保数据写入磁盘
                                 if(!destFile.flush()){
                                     LOG_WARN("Failed to flush during file copy, continuing...");
                                 }
                             }
                             
-                            // 确保目标文件的所有数据都写入磁盘
                             destFile.flush();
                             destFile.close();
                             sourceFile.close();
                             
                             if(bytesCopied == totalBytes){
-                                // 对于可执行文件，在删除临时文件前需要等待，让防病毒软件完成扫描
                                 if(isExecutable){
                                     QThread::msleep(300);
-                                    LOG_DEBUG("Waiting for antivirus scan to complete before removing temp file");
                                 }
-                                
-                                // 复制成功，删除临时文件
                                 if(QFile::remove(tempPath)){
                                     renameSuccess = true;
                                     copySuccess = true;
                                     LOG_INFO_FMT("File copied and temp file removed: %1 -> %2", tempPath, savePath);
                                 } else {
                                     LOG_WARN_FMT("File copied but failed to remove temp file: %1", tempPath);
-                                    // 即使删除临时文件失败，复制也算成功
                                     renameSuccess = true;
                                     copySuccess = true;
                                 }
                             } else {
                                 LOG_ERROR_FMT("File copy incomplete: copied %1/%2 bytes", bytesCopied, totalBytes);
-                                // 清理不完整的文件
                                 try {
                                     destFile.remove();
                                 } catch (...) {
@@ -670,35 +498,28 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                         } else {
                             LOG_ERROR_FMT("Failed to open files for copy: source=%1, dest=%2", 
                                          sourceFile.errorString(), destFile.errorString());
-                            // 确保已打开的文件被关闭
                             if(sourceFile.isOpen()) sourceFile.close();
                             if(destFile.isOpen()) destFile.close();
                         }
                     } catch (const std::exception& e) {
                         LOG_ERROR_FMT("Exception during file copy: %1", e.what());
-                        // 确保文件被关闭
                         try {
                             if(sourceFile.isOpen()) sourceFile.close();
                             if(destFile.isOpen()) destFile.close();
-                            // 清理可能不完整的文件
                             if(QFile::exists(savePath) && !copySuccess){
                                 destFile.remove();
                             }
                         } catch (...) {
-                            // 忽略清理时的异常
                         }
                     } catch (...) {
                         LOG_ERROR("Unknown exception during file copy");
-                        // 确保文件被关闭
                         try {
                             if(sourceFile.isOpen()) sourceFile.close();
                             if(destFile.isOpen()) destFile.close();
-                            // 清理可能不完整的文件
                             if(QFile::exists(savePath) && !copySuccess){
                                 destFile.remove();
                             }
                         } catch (...) {
-                            // 忽略清理时的异常
                         }
                     }
                 }
@@ -710,10 +531,8 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
             
             if(!renameSuccess){
                 LOG_ERROR_FMT("Failed to rename temp file: %1 -> %2", tempPath, savePath);
-                // 清理临时文件（如果重命名失败）
                 try {
                     if(QFile::exists(tempPath)){
-                        // 不删除临时文件，保留用于后续手动恢复
                         LOG_WARN_FMT("Temp file preserved for manual recovery: %1", tempPath);
                     }
                 } catch (...) {
@@ -723,11 +542,8 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                 return false;
             }
             
-            // 对于可执行文件，重命名成功后需要等待，让防病毒软件完成扫描
-            // 这样可以避免在后续操作（如MD5验证）时触发防病毒软件扫描导致程序终止
             if(isExecutable){
                 QThread::msleep(500);
-                LOG_DEBUG("Waiting for antivirus scan to complete after file rename");
             }
             }
         } catch (const std::exception& e) {
@@ -740,30 +556,18 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
             return false;
         }
 
-        // 验证文件MD5（如果提供了期望的MD5值）
         if (!expectedMD5.isEmpty()) {
-            // 首先检查文件是否存在
             if (!QFile::exists(savePath)) {
                 LOG_ERROR_FMT("File does not exist for MD5 verification: %1", savePath);
                 emit receiveFailed(fileId, "文件不存在，无法验证完整性");
                 return false;
             }
             
-            // 检测是否为可执行文件
-            QFileInfo fileInfo(savePath);
-            bool isExecutable = (fileInfo.suffix().toLower() == "exe" || 
-                                fileInfo.suffix().toLower() == "dll" ||
-                                fileInfo.suffix().toLower() == "bat" ||
-                                fileInfo.suffix().toLower() == "cmd" ||
-                                fileInfo.suffix().toLower() == "com" ||
-                                fileInfo.suffix().toLower() == "scr");
-            
-            // 对于可执行文件，在MD5验证前需要等待，让防病毒软件完成扫描
+            bool isExecutable = isExecutableLikeFile(savePath);
             if(isExecutable){
-                QThread::msleep(500);  // 增加等待时间，确保防病毒软件完成扫描
-                LOG_DEBUG("Waiting before MD5 verification for executable file");
+                QThread::msleep(500);
             } else {
-                QThread::msleep(100);  // 普通文件也需要短暂等待，确保文件系统同步
+                QThread::msleep(100);
             }
             
             try {
@@ -776,52 +580,38 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
                 LOG_INFO_FMT("File MD5 verified successfully: %1", savePath);
             } catch (const std::exception& e) {
                 LOG_ERROR_FMT("Exception during MD5 verification: %1", e.what());
-                // MD5验证失败不应该导致传输失败，只记录警告
                 LOG_WARN("MD5 verification failed due to exception, but file transfer completed");
             } catch (...) {
                 LOG_ERROR("Unknown exception during MD5 verification");
-                // MD5验证失败不应该导致传输失败，只记录警告
                 LOG_WARN("MD5 verification failed due to unknown exception, but file transfer completed");
             }
         }
 
         LOG_INFO_FMT("File received completed:%1",savePath);
 
-        // 发射信号（在锁外，避免信号处理函数中的死锁）
-        // 直接发射信号，Qt的信号槽机制会自动处理线程安全
-        // 添加异常处理，防止信号处理函数中的问题导致崩溃
         try {
             emit receiveCompleted(fileId,savePath);
         } catch (const std::exception& e) {
             LOG_ERROR_FMT("Exception in receiveCompleted signal handler: %1", e.what());
-            // 信号处理失败不应该影响文件接收的成功
         } catch (...) {
             LOG_ERROR("Unknown exception in receiveCompleted signal handler");
-            // 信号处理失败不应该影响文件接收的成功
         }
-    }
+        }
 
-    return true;
+        return true;
     } catch (const std::exception& e) {
-        // 捕获所有标准异常，防止程序崩溃
         LOG_ERROR(QString("[FileReceiver] Exception in receiveChunk: %1 (fileId=%2, chunkIndex=%3)")
                  .arg(e.what()).arg(fileId).arg(chunkIndex));
-        // 尝试清理资源
         try {
             QMutexLocker locker(&m_mutex);
             if (m_receivingFiles.contains(fileId)) {
                 ReceivingFileInfo *info = m_receivingFiles[fileId];
-                if (info && info->file) {
-                    info->file->close();
-                    delete info->file;
-                }
-                delete info;
                 m_receivingFiles.remove(fileId);
+                destroyReceivingInfo(info);
             }
         } catch (...) {
             LOG_ERROR("[FileReceiver] Failed to cleanup resources after exception");
         }
-        // 发射失败信号
         try {
             emit receiveFailed(fileId, QString("接收分片时发生异常: %1").arg(e.what()));
         } catch (...) {
@@ -829,25 +619,18 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
         }
         return false;
     } catch (...) {
-        // 捕获所有其他异常，防止程序崩溃
         LOG_ERROR(QString("[FileReceiver] Unknown exception in receiveChunk (fileId=%1, chunkIndex=%2)")
                  .arg(fileId).arg(chunkIndex));
-        // 尝试清理资源
         try {
             QMutexLocker locker(&m_mutex);
             if (m_receivingFiles.contains(fileId)) {
                 ReceivingFileInfo *info = m_receivingFiles[fileId];
-                if (info && info->file) {
-                    info->file->close();
-                    delete info->file;
-                }
-                delete info;
                 m_receivingFiles.remove(fileId);
+                destroyReceivingInfo(info);
             }
         } catch (...) {
             LOG_ERROR("[FileReceiver] Failed to cleanup resources after unknown exception");
         }
-        // 发射失败信号
         try {
             emit receiveFailed(fileId, "接收分片时发生未知异常");
         } catch (...) {

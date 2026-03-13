@@ -1,54 +1,63 @@
-#include "tcpserver.h"
+﻿#include "tcpserver.h"
 #include "dbmanager.h"
 #include "logger.h"
 #include "configmanager.h"
 #include "configkeys.h"
 
 #include <QCoreApplication>
+#include <QDir>
 
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
 
-    // 初始化配置管理器
-    if (!ConfigManager::instance().initialize("./server_config.json")) {
+    const QString appDir = QCoreApplication::applicationDirPath();
+    QDir::setCurrent(appDir);
+
+    const QString logFilePath = QDir(appDir).filePath("server.log");
+    const QString configFilePath = QDir(appDir).filePath("server_config.json");
+
+    Logger::init(logFilePath, Logger::INFO);
+    LOG_INFO(QString("Server startup directory: %1").arg(appDir));
+    LOG_INFO(QString("Server config path: %1").arg(configFilePath));
+
+    if (!ConfigManager::instance().initialize(configFilePath)) {
         qCritical() << "Failed to initialize config manager";
+        LOG_ERROR("Failed to initialize config manager");
         return -1;
     }
 
-    // 从配置读取日志级别和文件路径
     QString logLevel = ConfigManager::instance().getString(
         ConfigKeys::Server::Log::LEVEL, "INFO");
-    QString logFilePath = ConfigManager::instance().getString(
+    QString configuredLogFilePath = ConfigManager::instance().getString(
         ConfigKeys::Server::Log::FILE_PATH, "server.log");
 
-    // 初始化日志系统
-    Logger::init(logFilePath, Logger::stringToLevel(logLevel));
-    LOG_INFO("LinkChat 服务端启动");
-    LOG_INFO("配置文件: " + ConfigManager::instance().getConfigPath());
+    Logger::init(QDir(appDir).filePath(configuredLogFilePath), Logger::stringToLevel(logLevel));
+    LOG_INFO("LinkChat server starting");
+    LOG_INFO("Config file: " + ConfigManager::instance().getConfigPath());
 
-    // 从配置读取服务器端口
     int port = ConfigManager::instance().getInt(ConfigKeys::Server::PORT, 8080);
     
-    // 从配置读取心跳参数
     int heartbeatInterval = ConfigManager::instance().getInt(
         ConfigKeys::Server::HEARTBEAT_INTERVAL, 30000);
     int heartbeatTimeout = ConfigManager::instance().getInt(
         ConfigKeys::Server::HEARTBEAT_TIMEOUT, 90000);
     
-    LOG_INFO(QString("服务器配置 - 端口: %1, 心跳间隔: %2ms, 心跳超时: %3ms")
+    LOG_INFO(QString("Server config - port: %1, heartbeat interval: %2ms, heartbeat timeout: %3ms")
         .arg(port).arg(heartbeatInterval).arg(heartbeatTimeout));
 
-    // 启动 TCP 服务器
     if(TcpServer::instance().listen(QHostAddress::Any, port)){
-        LOG_INFO(QString("服务器启动成功，监听端口 %1").arg(port));
+        LOG_INFO(QString("Server started, listening on port %1").arg(port));
     }else{
-        LOG_ERROR("服务器启动失败！");
+        LOG_ERROR("Server failed to start");
         return -1;
     }
 
-    DBManager::instance().connectToDb();
-    LOG_INFO("数据库连接成功");
+    if (!DBManager::instance().connectToDb()) {
+        LOG_ERROR("Database connection failed, server exiting");
+        return -1;
+    }
+    LOG_INFO("Database connected");
 
     return a.exec();
 }

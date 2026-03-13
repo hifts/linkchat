@@ -1,4 +1,4 @@
-#include "transferstatemanager.h"
+﻿#include "transferstatemanager.h"
 #include "logger.h"
 
 #include <QCoreApplication>
@@ -17,22 +17,18 @@ TransferStateManager &TransferStateManager::instance()
 TransferStateManager::TransferStateManager(QObject *parent)
     : QObject{parent}
 {
-    // 创建状态文件目录
     QString appPath = QCoreApplication::applicationDirPath();
     QString stateDir = appPath + "/TransferState";
     QDir().mkpath(stateDir);
     m_stateFilePath = getStateFilePath();
 
-    // 程序启动时加载已保存的传输状态
     loadFromFile();
 
-    // 清理过期的传输状态
     cleanupOldTransfers();
 }
 
 TransferStateManager::~TransferStateManager()
 {
-    // 程序退出时保存状态
     QMutexLocker locker(&m_mutex);
     saveToFile();
 }
@@ -46,7 +42,6 @@ void TransferStateManager::saveTransferState(const TransferState &state)
 
     m_transfers[state.fileId] = newState;
 
-    // 保存到文件
     saveToFile();
 }
 
@@ -61,7 +56,6 @@ void TransferStateManager::removeTransferState(const QString &fileId)
     QMutexLocker locker(&m_mutex);
 
     if(m_transfers.remove(fileId)){
-        // 如果删除成功
         saveToFile();
     }else {
         LOG_WARN("Remove transfer state failed");
@@ -73,12 +67,10 @@ void TransferStateManager::markChunkCompleted(const QString &fileId, int chunkIn
     QMutexLocker locker(&m_mutex);
 
     if(m_transfers.contains(fileId)){
-        // 存放已完成的分片索引
         m_transfers[fileId].completedChunks.insert(chunkIndex);
         m_transfers[fileId].timestamp = QDateTime::currentSecsSinceEpoch();
     }
 
-    // 每完成10个分片保存一个，避免频繁IO
     if(chunkIndex % 10 == 0){
         saveToFile();
     }
@@ -141,7 +133,6 @@ void TransferStateManager::cleanupOldTransfers()
 
 void TransferStateManager::saveToFile()
 {
-    // 注意：此方法在已持有锁的情况下被调用，不要再加锁
 
     QJsonArray transferStates;
     for(const TransferState &state : m_transfers.values()){
@@ -157,7 +148,6 @@ void TransferStateManager::saveToFile()
         stateObj["totalChunks"] = state.totalChunks;
         stateObj["timestamp"] = (qint64)state.timestamp;
 
-        // 保存已完成的分片索引
         QJsonArray completedChunksArray;
         for(int chunkIndex : state.completedChunks){
             completedChunksArray.append(chunkIndex);
@@ -184,13 +174,11 @@ void TransferStateManager::loadFromFile()
         return;
     }
 
-    // 打开文件
     if(!file.open(QIODevice::ReadOnly | QIODevice::Text)){
         LOG_ERROR_FMT("Failed to load transfer states from file:%1",m_stateFilePath);
         return;
     }
 
-    // 读取文件内容
     QByteArray data = file.readAll();
     file.close();
 
@@ -199,7 +187,6 @@ void TransferStateManager::loadFromFile()
         return;
     }
 
-    // 解析文件内容
     QJsonArray transferStates = doc.array();
     for(const QJsonValue &value : transferStates){
         if(!value.isObject()){
@@ -219,7 +206,6 @@ void TransferStateManager::loadFromFile()
         state.totalChunks = stateObj["totalChunks"].toInt();
         state.timestamp = stateObj["timestamp"].toVariant().toLongLong();
 
-        // 解析已完成的分片索引
         QJsonArray completedChunksArray = stateObj["completedChunks"].toArray();
         for(const QJsonValue &chunkValue : completedChunksArray){
             state.completedChunks.insert(chunkValue.toInt());

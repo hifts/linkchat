@@ -1,4 +1,4 @@
-#include "encryptionmanager.h"
+﻿#include "encryptionmanager.h"
 #include "logger.h"
 #include <QCryptographicHash>
 #include <QRandomGenerator>
@@ -19,7 +19,6 @@ EncryptionManager::EncryptionManager(QObject* parent)
     // EncryptionManager initialized
 }
 
-// ========== 密码相关 ==========
 
 QByteArray EncryptionManager::generateSalt(int length)
 {
@@ -31,7 +30,6 @@ QByteArray EncryptionManager::generateSalt(int length)
     QByteArray salt;
     salt.reserve(length);
     
-    // 使用QRandomGenerator生成随机字节
     for (int i = 0; i < length; ++i) {
         salt.append(static_cast<char>(QRandomGenerator::global()->bounded(256)));
     }
@@ -51,10 +49,8 @@ QByteArray EncryptionManager::hashPassword(const QString& password, const QByteA
         return QByteArray();
     }
     
-    // 组合密码和盐值
     QByteArray combined = password.toUtf8() + salt;
     
-    // 使用SHA-256进行哈希
     QByteArray hash = QCryptographicHash::hash(combined, QCryptographicHash::Sha256);
     
     if (hash.isEmpty()) {
@@ -74,7 +70,6 @@ bool EncryptionManager::verifyPassword(const QString& password,
         return false;
     }
     
-    // 对输入密码进行哈希
     QByteArray computedHash = hashPassword(password, salt);
     
     if (computedHash.isEmpty()) {
@@ -82,43 +77,38 @@ bool EncryptionManager::verifyPassword(const QString& password,
         return false;
     }
     
-    // 比对哈希值
     bool match = (computedHash == storedHash);
     
     return match;
 }
 
-// ========== 消息加密相关 ==========
 
 QByteArray EncryptionManager::generateChatKey(int userId1, int userId2)
 {
     if (userId1 <= 0 || userId2 <= 0) {
-        QString errorMsg = QString("无效的用户ID: %1, %2").arg(userId1).arg(userId2);
+        QString errorMsg = QString("Invalid user IDs: %1, %2").arg(userId1).arg(userId2);
         LOG_WARN(QString("[Encryption] %1").arg(errorMsg));
         emit keyGenerationError(1, errorMsg);
         return QByteArray();
     }
     
     if (userId1 == userId2) {
-        QString errorMsg = QString("无法为同一用户生成密钥: %1").arg(userId1);
+        QString errorMsg = QString("Cannot generate a key for the same user: %1").arg(userId1);
         LOG_WARN(QString("[Encryption] %1").arg(errorMsg));
         emit keyGenerationError(1, errorMsg);
         return QByteArray();
     }
     
-    // 确保密钥生成的确定性：较小ID在前
     int minId = qMin(userId1, userId2);
     int maxId = qMax(userId1, userId2);
     
-    // 组合ID字符串
     QString combined = QString("%1_%2").arg(minId).arg(maxId);
     
-    // SHA-256哈希生成32字节密钥
     QByteArray key = QCryptographicHash::hash(combined.toUtf8(), 
                                              QCryptographicHash::Sha256);
     
     if (key.isEmpty()) {
-        QString errorMsg = QString("私聊密钥生成失败 (用户 %1 和 %2)").arg(userId1).arg(userId2);
+        QString errorMsg = QString("Failed to generate chat key (users %1 and %2)").arg(userId1).arg(userId2);
         LOG_ERROR(QString("[Encryption] %1").arg(errorMsg));
         emit keyGenerationError(1, errorMsg);
         return QByteArray();
@@ -130,21 +120,19 @@ QByteArray EncryptionManager::generateChatKey(int userId1, int userId2)
 QByteArray EncryptionManager::generateGroupKey(int groupId)
 {
     if (groupId <= 0) {
-        QString errorMsg = QString("无效的群ID: %1").arg(groupId);
+        QString errorMsg = QString("Invalid group ID: %1").arg(groupId);
         LOG_WARN(QString("[Encryption] %1").arg(errorMsg));
         emit keyGenerationError(2, errorMsg);
         return QByteArray();
     }
     
-    // 使用群ID生成密钥
     QString groupStr = QString("group_%1").arg(groupId);
     
-    // SHA-256哈希生成32字节密钥
     QByteArray key = QCryptographicHash::hash(groupStr.toUtf8(), 
                                              QCryptographicHash::Sha256);
     
     if (key.isEmpty()) {
-        QString errorMsg = QString("群聊密钥生成失败 (群 %1)").arg(groupId);
+        QString errorMsg = QString("Failed to generate group key (group %1)").arg(groupId);
         LOG_ERROR(QString("[Encryption] %1").arg(errorMsg));
         emit keyGenerationError(2, errorMsg);
         return QByteArray();
@@ -158,46 +146,47 @@ QByteArray EncryptionManager::xorEncryptDecrypt(const QByteArray& data,
 {
     if (data.isEmpty()) {
         LOG_WARN("[Encryption] Empty data for XOR operation");
-        emit encryptionOperationError("数据为空，无法进行加密操作");
+        emit encryptionOperationError("Data is empty, cannot perform encryption operation.");
         return QByteArray();
     }
     
     if (key.isEmpty()) {
         LOG_ERROR("[Encryption] Empty encryption key for XOR operation");
-        emit encryptionOperationError("加密密钥为空");
+        emit encryptionOperationError("Encryption key is empty.");
         return QByteArray();
     }
     
-    // 执行XOR操作
-    QByteArray result = data;
-    int keyLen = key.length();
+    QByteArray result;
+    result.resize(data.length());
     
-    for (int i = 0; i < result.length(); ++i) {
-        result[i] = result[i] ^ key[i % keyLen];
+    int keyLen = key.length();
+    int dataLen = data.length();
+    
+    const char* src = data.constData();
+    const char* k = key.constData();
+    char* dst = result.data();
+    
+    for (int i = 0; i < dataLen; ++i) {
+        dst[i] = src[i] ^ k[i % keyLen];
     }
     
     return result;
 }
 
-// ========== 密钥缓存管理 ==========
 
 QByteArray EncryptionManager::getCachedChatKey(int userId1, int userId2)
 {
-    // 确保缓存键的一致性
     int minId = qMin(userId1, userId2);
     int maxId = qMax(userId1, userId2);
     QString cacheKey = QString("chat_%1_%2").arg(minId).arg(maxId);
     
-    // 线程安全地访问缓存
     QMutexLocker locker(&m_cacheMutex);
     
-    // 检查缓存中是否存在
     if (m_keyCache.contains(cacheKey)) {
         return m_keyCache[cacheKey];
     }
     
-    // 不存在则生成并缓存，带重试机制
-    locker.unlock(); // 解锁以调用generateChatKey（避免死锁）
+    locker.unlock();
     
     QByteArray key;
     const int maxRetries = 3;
@@ -208,24 +197,20 @@ QByteArray EncryptionManager::getCachedChatKey(int userId1, int userId2)
         key = generateChatKey(userId1, userId2);
         
         if (!key.isEmpty()) {
-            // 成功生成密钥
-            locker.relock(); // 重新加锁以写入缓存
+            locker.relock();
             m_keyCache[cacheKey] = key;
             return key;
         }
         
-        // 生成失败，记录重试
         LOG_WARN(QString("[Encryption] Chat key generation failed (attempt %1/%2) for users %3 and %4")
                 .arg(attempt).arg(maxRetries).arg(userId1).arg(userId2));
         
         if (attempt < maxRetries) {
-            // 短暂延迟后重试
-            QThread::msleep(50 * attempt); // 递增延迟：50ms, 100ms, 150ms
+            QThread::msleep(50 * attempt);
         }
     }
     
-    // 所有重试都失败
-    QString errorMsg = QString("私聊密钥生成失败，已重试 %1 次").arg(maxRetries);
+    QString errorMsg = QString("Failed to generate chat key after %1 retries.").arg(maxRetries);
     LOG_ERROR(QString("[Encryption] %1 for users %2 and %3").arg(errorMsg).arg(userId1).arg(userId2));
     emit keyGenerationError(1, errorMsg);
     
@@ -236,16 +221,13 @@ QByteArray EncryptionManager::getCachedGroupKey(int groupId)
 {
     QString cacheKey = QString("group_%1").arg(groupId);
     
-    // 线程安全地访问缓存
     QMutexLocker locker(&m_cacheMutex);
     
-    // 检查缓存中是否存在
     if (m_keyCache.contains(cacheKey)) {
         return m_keyCache[cacheKey];
     }
     
-    // 不存在则生成并缓存，带重试机制
-    locker.unlock(); // 解锁以调用generateGroupKey（避免死锁）
+    locker.unlock();
     
     QByteArray key;
     const int maxRetries = 3;
@@ -256,24 +238,20 @@ QByteArray EncryptionManager::getCachedGroupKey(int groupId)
         key = generateGroupKey(groupId);
         
         if (!key.isEmpty()) {
-            // 成功生成密钥
-            locker.relock(); // 重新加锁以写入缓存
+            locker.relock();
             m_keyCache[cacheKey] = key;
             return key;
         }
         
-        // 生成失败，记录重试
         LOG_WARN(QString("[Encryption] Group key generation failed (attempt %1/%2) for group %3")
                 .arg(attempt).arg(maxRetries).arg(groupId));
         
         if (attempt < maxRetries) {
-            // 短暂延迟后重试
-            QThread::msleep(50 * attempt); // 递增延迟：50ms, 100ms, 150ms
+            QThread::msleep(50 * attempt);
         }
     }
     
-    // 所有重试都失败
-    QString errorMsg = QString("群聊密钥生成失败，已重试 %1 次").arg(maxRetries);
+    QString errorMsg = QString("Failed to generate group key after %1 retries.").arg(maxRetries);
     LOG_ERROR(QString("[Encryption] %1 for group %2").arg(errorMsg).arg(groupId));
     emit keyGenerationError(2, errorMsg);
     
@@ -292,7 +270,6 @@ bool EncryptionManager::isValidImageFormat(const QByteArray& data)
         return false;
     }
     
-    // 检查常见图片格式的文件头魔数
     const unsigned char* bytes = reinterpret_cast<const unsigned char*>(data.constData());
     
     // JPEG: FF D8 FF

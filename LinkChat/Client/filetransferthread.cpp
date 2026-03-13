@@ -1,4 +1,4 @@
-#include "filetransferthread.h"
+﻿#include "filetransferthread.h"
 #include "logger.h"
 #include "transferstatemanager.h"
 #include "encryptionmanager.h"
@@ -147,9 +147,8 @@ void FileTransferThread::run()
                 break;
             }
 
-            // 检查是否需要暂停传输文件
             while(m_paused && !m_stopped){
-                LOG_INFO("Transfer paused by user");
+                locker.unlock();
                 msleep(100);
                 locker.relock();
             }

@@ -1,4 +1,4 @@
-#include "chatmodel.h"
+﻿#include "chatmodel.h"
 
 ChatModel::ChatModel(QObject *parent)
     : QAbstractListModel{parent}
@@ -6,7 +6,6 @@ ChatModel::ChatModel(QObject *parent)
 
 int ChatModel::rowCount(const QModelIndex &parent) const
 {
-    // 告诉模型需要显示的行数(有多少条信息需要显示)
     if(parent.isValid()){
         return 0;
     }
@@ -47,7 +46,6 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
 void ChatModel::addMessage(const ChatMessage &msg)
 {
-    // 告诉 View 我们要加数据了，View 会自动刷新
     beginInsertRows(QModelIndex(),m_messages.size(),m_messages.size());
 
     m_messages.append(msg);

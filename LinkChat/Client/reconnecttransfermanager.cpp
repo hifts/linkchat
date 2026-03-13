@@ -1,4 +1,4 @@
-#include "reconnecttransfermanager.h"
+﻿#include "reconnecttransfermanager.h"
 #include "transferstatemanager.h"
 #include "logger.h"
 
@@ -12,7 +12,7 @@ ReconnectTransferManager &ReconnectTransferManager::instance()
 
 ReconnectTransferManager::ReconnectTransferManager(QObject *parent)
     : QObject{parent}
-    , m_resumeDelay(2000)  // 默认2秒延迟
+    , m_resumeDelay(2000)
     , m_isConnected(true)
 {
     m_resumeTimer = new QTimer(this);
@@ -53,11 +53,9 @@ void ReconnectTransferManager::onNetworkDisconnected()
     m_isConnected = false;
     LOG_WARN("Network disconnected");
 
-    // 将所有活动传输保存到待恢复列表
     m_pengingResumes.clear();
 
     for (auto it = m_activeTransfers.begin(); it != m_activeTransfers.end(); ++it) {
-        // 检查传输状态是否存在
         TransferState state = TransferStateManager::instance().loadTransferState(it.key());
         if(!state.fileId.isEmpty()){
             m_pengingResumes.append(it.value());
@@ -81,7 +79,6 @@ void ReconnectTransferManager::onNetworkReconnected()
     LOG_INFO("Network reconnected, scheduling transfer resume");
 
     if(!m_pengingResumes.isEmpty()){
-        // 延迟恢复传输
         scheduleResumeTransfers();
     }else{
         LOG_INFO("No pending transfers to resume");
@@ -121,24 +118,19 @@ void ReconnectTransferManager::resumeTransfers()
         return;
     }
 
-    // 发送恢复传输信号
     emit readyToResumeTransfer(m_pengingResumes);
 
-    // 逐个请求恢复
     for(const PendingTransferResume &resume : m_pengingResumes){
-        // 检查传输状态
         TransferState state = TransferStateManager::instance().loadTransferState(resume.fileId);
         if(state.fileId.isEmpty()){
             continue;
         }
 
-        // 检查是否已经完成
         if(TransferStateManager::instance().isTransferComplete(resume.fileId)){
             TransferStateManager::instance().removeTransferState(resume.fileId);
             continue;
         }
 
-        // 请求恢复传输
         emit requestResumeTransfer(resume.fileId, resume.friendId, resume.isSending);
     }
 

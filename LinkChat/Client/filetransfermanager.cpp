@@ -1,4 +1,4 @@
-#include "filetransfermanager.h"
+﻿#include "filetransfermanager.h"
 #include "transferstatemanager.h"
 #include "logger.h"
 
@@ -23,11 +23,10 @@ FileTransferManager::FileTransferManager(QObject *parent)
 
 FileTransferManager::~FileTransferManager()
 {
-    // 清除所有传输任务
     for(auto it = m_transfers.begin();it != m_transfers.end();++it){
         if(it.value()->thread){
-            it.value()->thread->stopTransfer();     // 停止传输文件
-            it.value()->thread->wait();             // 等待线程结束
+            it.value()->thread->stopTransfer();
+            it.value()->thread->wait();
             delete it.value()->thread;
         }
         delete it.value();
@@ -37,7 +36,6 @@ FileTransferManager::~FileTransferManager()
 
 QString FileTransferManager::generateFileId(const QString &filePath)
 {
-    // 使用文件路径 + 时间戳生成唯一ID,哈希加密
     QString data = filePath + QString::number(QDateTime::currentMSecsSinceEpoch());
     QByteArray hash = QCryptographicHash::hash(data.toUtf8(),QCryptographicHash::Md5);
     return QString(hash.toHex());
@@ -53,7 +51,6 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
 {
     QFileInfo fileInfo(filePath);
 
-    // 文件不存在或者是文件夹则不能传输
     if (!fileInfo.exists() || !fileInfo.isFile()) {
         LOG_WARN_FMT("File not found:%1",filePath);
         return QString();
@@ -61,7 +58,6 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
 
     QString fid = fileId;
 
-    // 创建传输信息
     FileTransferInfo *info = new FileTransferInfo;
     info->fileId = fileId;
     info->fileName = fileInfo.fileName();
@@ -72,17 +68,14 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
     info->progress = 0;
     info->thread = new FileTransferThread(filePath,fileId,friendId,m_currentUserId,this);
 
-    // 检查是否有已保存的传输状态（断点续传）
     TransferState savedState = TransferStateManager::instance().loadTransferState(fileId);
     if(!savedState.fileId.isEmpty() && savedState.isSending && savedState.fileSize == info->fileSize){
-        // 恢复传输：设置已完成分片
         info->thread->setCompletedChunks(savedState.completedChunks);
         info->progress = savedState.totalChunks > 0 ?
             (savedState.completedChunks.size() * 100) / savedState.totalChunks : 0;
         LOG_INFO(QString("Resuming file transfer: %1, completed chunks: %2/%3")
                      .arg(info->fileName).arg(savedState.completedChunks.size()).arg(savedState.totalChunks));
     } else {
-        // 新传输：保存初始状态
         TransferState state;
         state.fileId = fileId;
         state.fileName = info->fileName;
@@ -94,8 +87,7 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
         state.completedChunks = QSet<int>();
         state.timestamp = QDateTime::currentSecsSinceEpoch();
 
-        // 计算文件MD5（可选，大文件可能耗时）
-        if(info->fileSize < 50 * 1024 * 1024) { // 小于50MB才计算MD5
+        if(info->fileSize < 50 * 1024 * 1024) {
             state.fileMD5 = info->thread->calculateFileMD5();
         }
 
@@ -103,7 +95,6 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
         LOG_INFO_FMT("New file transfer started: %1, total chunks: %2", info->fileName, state.totalChunks);
     }
 
-    // 连接信号（信号会自动跨线程传递）
     connect(info->thread,&FileTransferThread::chunkReady,this,&FileTransferManager::onChunkReady);
     connect(info->thread,&FileTransferThread::progressUpdated,this,&FileTransferManager::onProgressUpdated);
     connect(info->thread,&FileTransferThread::transferCompleted,this,&FileTransferManager::onTransferCompleted);
@@ -112,10 +103,8 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
 
     m_transfers[fileId] = info;
 
-    // 发送开始传输信息
     emit transferStarted(fileId,info->fileName);
 
-    // 自动调用run()方法
     info->thread->start();
 
     return fileId;
@@ -137,14 +126,12 @@ void FileTransferManager::pauseTransfer(const QString &fileId)
 void FileTransferManager::resumeTransfer(const QString &fileId)
 {
     if(!m_transfers.contains(fileId)){
-        // 尝试从保存的状态恢复
         TransferState state = TransferStateManager::instance().loadTransferState(fileId);
         if(state.fileId.isEmpty() || !state.isSending){
             LOG_WARN_FMT("No transfer state found for:%1",fileId);
             return;
         }
 
-        // 重新启动传输
         startSendFile(state.fileId,state.filePath,state.friendId);
         return;
     }
@@ -186,13 +173,11 @@ QList<TransferState> FileTransferManager::getIncompleteTransfers()
 
 void FileTransferManager::onChunkReady(const QByteArray &chunk, int chunkIndex, int totalChunks)
 {
-    // 获取发送该信号的线程对象
     FileTransferThread *thread = qobject_cast<FileTransferThread*>(sender());
     if(!thread){
         return;
     }
 
-    // 找到对应的传输信息
     QString fileId;
     int friendId = 0;
 
@@ -211,7 +196,6 @@ void FileTransferManager::onChunkReady(const QByteArray &chunk, int chunkIndex, 
 
 void FileTransferManager::onProgressUpdated(int percent, qint64 sent, qint64 total)
 {
-    // 获取发送该信号的线程对象
     FileTransferThread *thread = qobject_cast<FileTransferThread*>(sender());
     if(!thread){
         return;
@@ -228,7 +212,6 @@ void FileTransferManager::onProgressUpdated(int percent, qint64 sent, qint64 tot
 
 void FileTransferManager::onTransferCompleted()
 {
-    // 获取发送该信号的线程对象
     FileTransferThread *thread = qobject_cast<FileTransferThread*>(sender());
     if(!thread){
         return;
@@ -239,7 +222,6 @@ void FileTransferManager::onTransferCompleted()
             QString fileId = it.key();
             emit transferCompleted(fileId);
 
-            // 延迟清理已经完成传输的线程
             QTimer::singleShot(1000,this,[=](){
                 if(m_transfers.contains(fileId)){
                     FileTransferInfo *info = m_transfers[fileId];
@@ -258,7 +240,6 @@ void FileTransferManager::onTransferCompleted()
 
 void FileTransferManager::onTransferFailed(const QString &error)
 {
-    // 获取发送该信号的线程对象
     FileTransferThread *thread = qobject_cast<FileTransferThread*>(sender());
     if(!thread){
         return;

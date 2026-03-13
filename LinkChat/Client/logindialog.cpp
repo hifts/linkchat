@@ -1,11 +1,15 @@
 #include "logindialog.h"
+
+#include "encryptionmanager.h"
 #include "networkmanager.h"
 #include "packet.h"
-#include "ui_logindialog.h"
 #include "registerdialog.h"
+#include "ui_logindialog.h"
 
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <cstring>
 
 LoginDialog::LoginDialog(QWidget *parent)
     : QDialog(parent)
@@ -13,112 +17,128 @@ LoginDialog::LoginDialog(QWidget *parent)
 {
     ui->setupUi(this);
 
-    connect(&NetworkManager::instance(),&NetworkManager::sigLoginResult,this,&LoginDialog::onSigLoginResult);
+    connect(&NetworkManager::instance(), &NetworkManager::sigLoginResult,
+            this, &LoginDialog::onSigLoginResult);
+    connect(&NetworkManager::instance(), &NetworkManager::sigLoginSaltReceived,
+            this, &LoginDialog::onSigLoginSaltReceived);
 
-    // 给控件起名
-    ui->lblTitle->setObjectName("lblTitle");
-    ui->btnClose->setObjectName("btnClose");
+    ui->btnClose->setAutoDefault(false);
+    ui->btnClose->setDefault(false);
+    ui->btnReg->setAutoDefault(false);
+    ui->btnReg->setDefault(false);
+    ui->btnLogin->setAutoDefault(false);
+    ui->btnLogin->setDefault(false);
+
+    connect(ui->editUser, &QLineEdit::returnPressed, this, [this]() {
+        if (ui->editPwd->text().isEmpty()) {
+            ui->editPwd->setFocus();
+            return;
+        }
+        on_btnLogin_clicked();
+    });
+
+    connect(ui->editPwd, &QLineEdit::returnPressed, this, [this]() {
+        on_btnLogin_clicked();
+    });
+
+    setWindowFlags(Qt::FramelessWindowHint);
+    setAttribute(Qt::WA_TranslucentBackground);
+
+    ui->LoginFrame->setObjectName("LoginFrame");
     ui->btnLogin->setObjectName("btnLogin");
     ui->btnReg->setObjectName("btnReg");
-    ui->LoginFrame->setObjectName("LoginFrame");
-    // 去掉窗口边框，看起来更现代
-    this->setWindowFlags(Qt::FramelessWindowHint);
-    this->setAttribute(Qt::WA_TranslucentBackground);
 
-
-    QString style = R"(
-    /* 整体窗口背景：蓝紫渐变色 */
+    const QString style = R"(
     QDialog {
-        background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #2c3e50, stop:1 #4ca1af);
+        background-color: qlineargradient(
+            spread: pad, x1:0, y1:0, x2:1, y2:1,
+            stop:0 #2c3e50, stop:1 #4ca1af
+        );
     }
 
-    /* 中间卡片：磨砂玻璃质感 */
     QFrame#LoginFrame {
-        background-color: rgba(0, 0, 0, 0.6); /* 纯黑背景，60%透明度 */
-        border-radius: 15px;
-        border: 1px solid rgba(255, 255, 255, 0.1); /* 微微的白边，增加立体感 */
+        background-color: rgba(0, 0, 0, 0.58);
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
     }
 
-    /* 标题 */
     QLabel#lblTitle {
-        font-family: "Microsoft YaHei", "Segoe UI", sans-serif; /* 强制使用无衬线现代字体 */
-        font-size: 28px;       /* 字号适中 */
-        font-weight: bold;     /* 加粗 */
-        color: #ffffff;        /* 纯白文字 */
-        background-color: transparent;
-        margin-bottom: 10px;   /* 下方留点空隙 */
-        letter-spacing: 2px;   /* 字间距拉开一点点，显得高级 */
+        font-family: "Microsoft YaHei";
+        font-size: 28px;
+        font-weight: bold;
+        color: #ffffff;
+        background: transparent;
     }
 
-    /*  输入框 */
     QLineEdit {
-        background-color: rgba(255, 255, 255, 0.1); /* 微微发白的背景 */
-        border: none;
-        border-radius: 5px;    /* 小圆角 */
-        color: #ffffff;        /* 文字白色 */
-        padding: 8px 10px;     /* 内部留白，不要让文字顶着框 */
+        background-color: rgba(255, 255, 255, 0.12);
+        border: 1px solid transparent;
+        border-radius: 6px;
+        color: #ffffff;
+        padding: 10px 12px;
         font-family: "Microsoft YaHei";
         font-size: 14px;
-        selection-background-color: #3498db;
-    }
-    QLineEdit:focus {
-        background-color: rgba(255, 255, 255, 0.2); /* 选中时稍微亮一点 */
-        border: 1px solid #3498db; /* 出现蓝色细边框 */
-    }
-    /* 输入框里的提示文字颜色 */
-    QLineEdit::placeholder {
-        color: #aaaaaa;
     }
 
-    /* 登录按钮 */
+    QLineEdit:focus {
+        background-color: rgba(255, 255, 255, 0.18);
+        border: 1px solid #3498db;
+    }
+
+    QLineEdit::placeholder {
+        color: #b8c0cc;
+    }
+
     QPushButton#btnLogin {
         background-color: #3498db;
         color: white;
-        border-radius: 5px;
-        font-size: 16px;
-        font-family: "Microsoft YaHei";
-        font-weight: bold;
-        padding: 8px;
         border: none;
-        outline: none;
-    }
-    QPushButton#btnLogin:hover {
-        background-color: #5dade2;
-    }
-    QPushButton#btnLogin:pressed {
-        background-color: #2980b9;
-        padding-top: 10px; /* 简单的按下微动效 */
-        padding-bottom: 6px;
+        border-radius: 6px;
+        padding: 10px;
+        font-family: "Microsoft YaHei";
+        font-size: 18px;
+        font-weight: bold;
     }
 
-    /* 注册按钮 */
+    QPushButton#btnLogin:hover {
+        background-color: #4aa3df;
+    }
+
+    QPushButton#btnLogin:pressed {
+        background-color: #2d7fb8;
+    }
+
     QPushButton#btnReg {
         background: transparent;
-        color: #dddddd;
+        color: #e8edf2;
         border: none;
-        font-size: 12px;
         font-family: "Microsoft YaHei";
+        font-size: 13px;
+        padding: 6px;
     }
+
     QPushButton#btnReg:hover {
         color: #ffffff;
         text-decoration: underline;
     }
 
-    /* 关闭按钮 */
     QPushButton#btnClose {
-        color: rgba(255, 255, 255, 0.7);
+        color: rgba(255, 255, 255, 0.75);
         background: transparent;
-        font-weight: 900; /* 特别粗 */
+        border: none;
+        font-weight: 900;
         font-family: "Arial";
         font-size: 16px;
-        border: none;
+        border-radius: 4px;
     }
-    QPushButton#btnClose:hover {
-        color: #e74c3c; /* 悬停变红 */
-    }
-)";
 
-    this->setStyleSheet(style);
+    QPushButton#btnClose:hover {
+        color: #e74c3c;
+        background-color: rgba(255, 255, 255, 0.08);
+    }
+    )";
+
+    setStyleSheet(style);
 }
 
 LoginDialog::~LoginDialog()
@@ -128,9 +148,7 @@ LoginDialog::~LoginDialog()
 
 void LoginDialog::mousePressEvent(QMouseEvent *event)
 {
-    // 只有左键点击才能拖动
     if (event->button() == Qt::LeftButton) {
-        // 计算鼠标相对于窗口左上角的偏移量
         m_dragPosition = event->globalPos() - frameGeometry().topLeft();
         event->accept();
     }
@@ -138,9 +156,7 @@ void LoginDialog::mousePressEvent(QMouseEvent *event)
 
 void LoginDialog::mouseMoveEvent(QMouseEvent *event)
 {
-    // 只有按住左键移动才处理
     if (event->buttons() & Qt::LeftButton) {
-        // 移动窗口到鼠标当前位置减去偏移量
         move(event->globalPos() - m_dragPosition);
         event->accept();
     }
@@ -149,61 +165,106 @@ void LoginDialog::mouseMoveEvent(QMouseEvent *event)
 void LoginDialog::on_btnReg_clicked()
 {
     RegisterDialog regDlg(this);
-
     regDlg.exec();
 }
 
-
 void LoginDialog::on_btnLogin_clicked()
 {
-    QString user = ui->editUser->text().trimmed();
-    QString pwd = ui->editPwd->text();
-
-    if(user.isEmpty() || pwd.isEmpty()){
-        QMessageBox::warning(this,"提示","账号或密码不能为空");
+    if (m_waitingSalt) {
         return;
     }
 
-    // 打包（登陆包）
-    LoginReq req;
-    memset(&req,0,sizeof(LoginReq));
-    strncpy(req.userName,user.toStdString().c_str(),32);
-    strncpy(req.password,pwd.toStdString().c_str(),32);
+    const QString user = ui->editUser->text().trimmed();
+    const QString pwd = ui->editPwd->text();
+    if (user.isEmpty() || pwd.isEmpty()) {
+        QMessageBox::warning(this, "Login", "Username or password cannot be empty.");
+        return;
+    }
 
-    // 请求服务端登录
-    NetworkManager::instance().sendMsg(MSG_LOGIN_REQ,QByteArray((char*)&req,sizeof(LoginReq)));
+    LoginSaltReq req;
+    std::memset(&req, 0, sizeof(LoginSaltReq));
+    std::strncpy(req.userName, user.toUtf8().constData(), sizeof(req.userName) - 1);
+
+    m_pendingUserName = user;
+    m_pendingPassword = pwd;
+    m_pendingCredentialHash.clear();
+    m_waitingSalt = true;
+    ui->btnLogin->setEnabled(false);
+
+    NetworkManager::instance().sendMsg(MSG_LOGIN_SALT_REQ, QByteArray((char*)&req, sizeof(LoginSaltReq)));
 }
-
 
 void LoginDialog::on_btnClose_clicked()
 {
-    this->reject();
+    reject();
 }
 
-void LoginDialog::onSigLoginResult(bool success, int uid,int errorCode)
+void LoginDialog::onSigLoginSaltReceived(bool success, const QByteArray &saltBase64)
 {
-    if(success){
-        // 保存用户id,用户名,密码
-        m_loginUid = uid;
-        m_loginUserName = ui->editUser->text().trimmed();
-        m_loginPassword = ui->editPwd->text().trimmed();
-        qDebug()<<"登陆成功，uid:"<<uid;
-        // QMessageBox::information(this,"提示","登录成功");
-        this->accept();
-    }else{
-        QString msg;
-        if(errorCode == 2){
-            msg = "该账号已在其他设备登录，禁止多端登录！";
-        }else{
-            msg = "用户名或密码错误";
-        }
-        QMessageBox::warning(this,"登录失败",msg);
+    if (!m_waitingSalt) {
+        return;
     }
+
+    if (!success) {
+        m_waitingSalt = false;
+        ui->btnLogin->setEnabled(true);
+        QMessageBox::warning(this, "Login Failed", "Failed to fetch login salt.");
+        return;
+    }
+
+    const QByteArray salt = QByteArray::fromBase64(saltBase64);
+    if (salt.isEmpty()) {
+        m_waitingSalt = false;
+        ui->btnLogin->setEnabled(true);
+        QMessageBox::warning(this, "Login Failed", "Server returned invalid salt.");
+        return;
+    }
+
+    const QByteArray passwordHash = EncryptionManager::instance().hashPassword(m_pendingPassword, salt);
+    if (passwordHash.isEmpty()) {
+        m_waitingSalt = false;
+        ui->btnLogin->setEnabled(true);
+        QMessageBox::warning(this, "Login Failed", "Local password hash failed.");
+        return;
+    }
+
+    QByteArray hashBase64 = passwordHash.toBase64();
+    if (hashBase64.size() >= 64) {
+        hashBase64 = hashBase64.left(63);
+    }
+
+    LoginReq req;
+    std::memset(&req, 0, sizeof(LoginReq));
+    std::strncpy(req.userName, m_pendingUserName.toUtf8().constData(), sizeof(req.userName) - 1);
+    std::strncpy(req.passwordHash, hashBase64.constData(), sizeof(req.passwordHash) - 1);
+
+    m_pendingCredentialHash = QString::fromLatin1(hashBase64);
+    NetworkManager::instance().sendMsg(MSG_LOGIN_REQ, QByteArray((char*)&req, sizeof(LoginReq)));
 }
 
-QString LoginDialog::loginPassword() const
+void LoginDialog::onSigLoginResult(bool success, int uid, int errorCode)
 {
-    return m_loginPassword;
+    m_waitingSalt = false;
+    ui->btnLogin->setEnabled(true);
+
+    if (success) {
+        m_loginUid = uid;
+        m_loginUserName = m_pendingUserName.isEmpty() ? ui->editUser->text().trimmed() : m_pendingUserName;
+        m_loginCredentialHash = m_pendingCredentialHash;
+        accept();
+        return;
+    }
+
+    if (errorCode == 2) {
+        QMessageBox::warning(this, "Login Failed", "This account is already online on another device.");
+        return;
+    }
+    QMessageBox::warning(this, "Login Failed", "Invalid username or password.");
+}
+
+QString LoginDialog::loginCredentialHash() const
+{
+    return m_loginCredentialHash;
 }
 
 int LoginDialog::loginUid() const
@@ -215,4 +276,3 @@ QString LoginDialog::loginUserName() const
 {
     return m_loginUserName;
 }
-

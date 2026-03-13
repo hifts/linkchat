@@ -1,4 +1,4 @@
-#include "tcpserver.h"
+﻿#include "tcpserver.h"
 #include "logger.h"
 
 
@@ -35,22 +35,18 @@ ClientSocket *TcpServer::getUserSocket(int uid)
         return m_onlineUsers.value(uid);
     }
 
-    // 用户不在线
     return nullptr;
 }
 
 void TcpServer::incomingConnection(qintptr socketDescriptor)
 {
-    // 有新客户连接就创建一个套接字连接
     ClientSocket *socket = new ClientSocket(this);
 
-    // 设置文件描述符
     if(!socket->setSocketDescriptor(socketDescriptor)){
         socket->deleteLater();
         return;
     }
 
-    // 处理断开
     connect(socket,&QTcpSocket::disconnected,socket,&ClientSocket::deleteLater);
 
     qDebug()<< "New Client Connected:"<<socketDescriptor;

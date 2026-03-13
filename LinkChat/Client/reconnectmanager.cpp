@@ -1,68 +1,67 @@
 #include "reconnectmanager.h"
-#include "logger.h"
+
 #include "configmanager.h"
 #include "configkeys.h"
+#include "logger.h"
 
+#include <QRandomGenerator>
 #include <QtMath>
 
 ReconnectManager::ReconnectManager(QObject *parent)
     : QObject{parent}
-    ,m_state(Disconnected)
-    ,m_reconnectAttempts(0)
-    ,m_serverPort(0)
+    , m_state(Disconnected)
+    , m_autoReconnect(true)
+    , m_reconnectAttempts(0)
+    , m_serverPort(0)
+    , m_initialDelay(5000)
+    , m_maxDelay(30000)
+    , m_maxAttempts(5)
 {
-    // 从 ConfigManager 读取重连参数
     m_autoReconnect = ConfigManager::instance().getBool(
         ConfigKeys::Client::AUTO_RECONNECT, true);
-    
     m_maxAttempts = ConfigManager::instance().getInt(
         ConfigKeys::Client::RECONNECT_MAX_ATTEMPTS, 5);
-    
     m_initialDelay = ConfigManager::instance().getInt(
         ConfigKeys::Client::RECONNECT_INTERVAL, 5000);
-    
-    // 设置最大延迟为初始延迟的 6 倍（指数退避算法）
     m_maxDelay = m_initialDelay * 6;
-    
-    LOG_INFO(QString("重连管理器初始化: 自动重连=%1, 最大尝试次数=%2, 初始延迟=%3ms")
-        .arg(m_autoReconnect ? "启用" : "禁用")
-        .arg(m_maxAttempts)
-        .arg(m_initialDelay));
-    
+
+    LOG_INFO(QString("Reconnect manager initialized: autoReconnect=%1, maxAttempts=%2, initialDelay=%3ms")
+                 .arg(m_autoReconnect ? "enabled" : "disabled")
+                 .arg(m_maxAttempts)
+                 .arg(m_initialDelay));
+
     m_reconnectTimer = new QTimer(this);
     m_reconnectTimer->setSingleShot(true);
-    connect(m_reconnectTimer,&QTimer::timeout,this,&ReconnectManager::doReconnect);
+    connect(m_reconnectTimer, &QTimer::timeout, this, &ReconnectManager::doReconnect);
 }
 
 void ReconnectManager::setConnectionState(ConnectionState state)
 {
-    if(m_state == state){
+    if (m_state == state) {
         return;
     }
 
-    ConnectionState odlState = m_state;
     m_state = state;
 
-    // 状态变化日志
     switch (state) {
     case Disconnected:
-        LOG_INFO("状态变更->已断开");
-        if(m_autoReconnect && !m_serverIp.isEmpty()){
+        LOG_INFO("State changed: disconnected");
+        if (m_autoReconnect && !m_serverIp.isEmpty()) {
             startReconnect();
         }
         break;
     case Connecting:
-        LOG_INFO("状态变更->连接中");
+        LOG_INFO("State changed: connecting");
         break;
     case Connected:
-        LOG_INFO("状态变更->已连接");
+        LOG_INFO("State changed: connected");
         onReconnectSuccess();
         break;
     case Reconnecting:
-        LOG_INFO("状态变更->重连中");
+        LOG_INFO("State changed: reconnecting");
         break;
     default:
-        LOG_INFO("未知状态");
+        LOG_INFO("State changed: unknown");
         break;
     }
 }
@@ -70,10 +69,9 @@ void ReconnectManager::setConnectionState(ConnectionState state)
 void ReconnectManager::setAutoConnect(bool enable)
 {
     m_autoReconnect = enable;
-    LOG_INFO(QString("%1自动重连").arg(enable ? "启用" : "禁用"));
+    LOG_INFO(QString("Auto reconnect %1").arg(enable ? "enabled" : "disabled"));
 
-    if(!enable){
-        // 停止重连
+    if (!enable) {
         stopReconnect();
     }
 }
@@ -81,64 +79,51 @@ void ReconnectManager::setAutoConnect(bool enable)
 void ReconnectManager::startReconnect()
 {
     if (!m_autoReconnect) {
-        LOG_WARN("自动重连已禁用,跳过重连");
+        LOG_WARN("Auto reconnect is disabled, skip reconnect");
         return;
     }
 
     if (m_serverIp.isEmpty()) {
-        LOG_ERROR("服务器地址为空,无法重连");
+        LOG_ERROR("Server address is empty, cannot reconnect");
         return;
     }
 
     if (m_state == Reconnecting) {
-        LOG_WARN("已在重连中,跳过");
+        LOG_WARN("Already reconnecting, skip");
         return;
     }
 
-    // 检查是否到达最大重连次数
-    if(m_maxAttempts > 0 && m_reconnectAttempts >= m_maxAttempts){
-        LOG_ERROR(QString("已达到最大重连次数%1，停止重连").arg(m_maxAttempts));
-
-        // 发送最大重连次数信号
+    if (m_maxAttempts > 0 && m_reconnectAttempts >= m_maxAttempts) {
+        LOG_ERROR(QString("Reached max reconnect attempts (%1), stop reconnecting").arg(m_maxAttempts));
         emit maxAttemptsReached();
         return;
     }
 
-    // 正在重连中
     m_state = Reconnecting;
-
-    int delay = calculateNextDelay();
-
-    emit reconnectStateChanged(m_reconnectAttempts + 1,delay);
-
-    // 启动重连定时器
+    const int delay = calculateNextDelay();
+    emit reconnectStateChanged(m_reconnectAttempts + 1, delay);
     m_reconnectTimer->start(delay);
 }
 
 void ReconnectManager::stopReconnect()
 {
-    if(m_reconnectTimer->isActive()){
-        LOG_INFO("停止重连");
+    if (m_reconnectTimer->isActive()) {
+        LOG_INFO("Stop reconnect timer");
         m_reconnectTimer->stop();
     }
 
-    if(m_state == Reconnecting){
+    if (m_state == Reconnecting) {
         m_state = Disconnected;
     }
 }
 
 void ReconnectManager::onReconnectSuccess()
 {
-    if(m_reconnectAttempts > 0){
-        // Reconnection successful
-    }
-
     m_reconnectAttempts = 0;
     stopReconnect();
 
-    // 如果有保存有登录信息，则发出自动登录信号
-    if(hasLoginInfo()){
-        emit needAutoLogin(m_savedUserName,m_savedPassword);
+    if (hasLoginInfo()) {
+        emit needAutoLogin(m_savedUserName, decryptSavedCredential());
     }
 }
 
@@ -148,44 +133,40 @@ void ReconnectManager::setServerInfo(const QString &ip, uint16_t port)
     m_serverPort = port;
 }
 
-void ReconnectManager::saveLoginInfo(const QString &userName, const QString &password)
+void ReconnectManager::saveLoginInfo(const QString &userName, const QString &credentialHash)
 {
     m_savedUserName = userName;
-    m_savedPassword = password;
+
+    m_credentialKey.clear();
+    m_credentialKey.resize(32);
+    for (int i = 0; i < m_credentialKey.size(); ++i) {
+        m_credentialKey[i] = static_cast<char>(QRandomGenerator::global()->bounded(256));
+    }
+
+    m_savedCredentialCipher = xorWithKey(credentialHash.toUtf8(), m_credentialKey);
 }
 
 void ReconnectManager::clearLoginInfo()
 {
     m_savedUserName.clear();
-    m_savedPassword.clear();
+    m_savedCredentialCipher.clear();
+    m_credentialKey.clear();
 }
 
 void ReconnectManager::doReconnect()
 {
-    // 检测出超时了，需要重连
-
-    // 重连次数增加1
     m_reconnectAttempts++;
-
-    // 发送重连信号，通知NetworkManager执行
-    emit needReconnect(m_serverIp,m_serverPort);
+    emit needReconnect(m_serverIp, m_serverPort);
 }
 
 int ReconnectManager::calculateNextDelay()
 {
-    // 使用指数退避算法计算延迟时间
-    // delay = min(initialDelay * 2^attempts, maxDelay)
-
-    // 第一次
-    if(m_reconnectAttempts == 0){
+    if (m_reconnectAttempts == 0) {
         return m_initialDelay;
     }
 
-    // 计算指数避退延迟
-    int exponentialDelay = m_initialDelay * qPow(2,m_reconnectAttempts - 1);
-
-    // 限制在最大延迟范围内
-    return qMin(exponentialDelay,m_maxDelay);
+    const int exponentialDelay = m_initialDelay * qPow(2, m_reconnectAttempts - 1);
+    return qMin(exponentialDelay, m_maxDelay);
 }
 
 void ReconnectManager::setInitialDelay(int ms)
@@ -201,4 +182,25 @@ void ReconnectManager::setMaxDelay(int ms)
 void ReconnectManager::setMaxAttempts(int count)
 {
     m_maxAttempts = count;
+}
+
+QByteArray ReconnectManager::xorWithKey(const QByteArray &data, const QByteArray &key) const
+{
+    if (data.isEmpty() || key.isEmpty()) {
+        return QByteArray();
+    }
+
+    QByteArray result(data.size(), '\0');
+    for (int i = 0; i < data.size(); ++i) {
+        result[i] = data[i] ^ key[i % key.size()];
+    }
+    return result;
+}
+
+QString ReconnectManager::decryptSavedCredential() const
+{
+    if (m_savedCredentialCipher.isEmpty() || m_credentialKey.isEmpty()) {
+        return QString();
+    }
+    return QString::fromUtf8(xorWithKey(m_savedCredentialCipher, m_credentialKey));
 }

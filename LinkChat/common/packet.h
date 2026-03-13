@@ -1,4 +1,3 @@
-#pragma once
 #ifndef PACKET_H
 #define PACKET_H
 
@@ -6,314 +5,322 @@
 #include <cstdint>
 #include <cstring>
 
+/*
+ * 协议类型 (Protocol Types)
+ * 定义了客户端与服务端通信时各种业务的消息类型，如心跳、登录、聊天、添加好友、文件传输等请求和响应。
+ */
 enum MessageType{
-    MSG_UNDEFINED = 0,              // 未定义消息类型
-    MSG_HEARTBEAT_REQ,              // 心跳请求
-    MSG_HEARTBEAT_RESP,             // 心跳响应
-    MSG_REGISTER_REQ,               // 注册请求
-    MSG_REGISTER_RESP,              // 注册响应
-    MSG_LOGIN_REQ,                  // 登录请求
-    MSG_LOGIN_RESP,                 // 登录响应
-    MSG_FRIEND_LIST_REQ,            // 好友列表请求
-    MSG_FRIEND_LIST_RESP,           // 好友列表响应
-    MSG_FRIEND_STATUS_NOTIFY,       // 好友状态通知
-    MSG_CHAT_HISTORY_REQ,           // 历史消息请求
-    MSG_CHAT_HISTORY_RESP,          // 历史消息响应
-    MSG_SEARCH_USER_REQ,            // 搜索请求
-    MSG_SEARCH_USER_RESP,           // 搜索响应
-    MSG_ADD_FRIEND_REQ,             // 添加好友申请
-    MSG_ADD_FRIEND_NOTIFY,          // 添加好友通知
-    MSG_ADD_FRIEND_RESP,            // 处理好友回复（好友同意/拒绝）
-    MSG_ADD_FRIEND_RESULT,          // 添加好友响应
-    MSG_DELETE_FRIEND_REQ,          // 删除好友请求
-    MSG_DELETE_FRIEND_RESP,         // 删除好友响应
-    MSG_CHAT_TEXT,                  // 文本聊天
-    MSG_FILE_TRANSFER_REQ,          // 文件传输请求
-    MSG_FILE_TRANSFER_RESP,         // 文件传输响应
-    MSG_FILE_CHUNK,                 // 文件分片数据
-    MSG_FILE_TRANSFER_ACK,          // 文件传输确认
-    MSG_FILE_TRANSFER_CANCEL,       // 取消文件传输
-
-    // 断点续传协议
-    MSG_FILE_RESUME_REQ,            // 恢复传输请求
-    MSG_FILE_RESUME_RESP,           // 恢复传输响应
-    MSG_FILE_VERIFY_REQ,            // 文件校验请求
-    MSG_FILE_VERIFY_RESP,           // 文件校验响应
-
-    // 群聊协议
-    MSG_CREATE_GROUP_REQ,           // 创建群聊请求
-    MSG_CREATE_GROUP_RESP,          // 创建群聊响应
-    MSG_GROUP_LIST_REQ,             // 获取群列表请求
-    MSG_GROUP_LIST_RESP,            // 获取群列表响应
-    MSG_GROUP_MEMBER_LIST_REQ,      // 获取群成员列表请求
-    MSG_GROUP_MEMBER_LIST_RESP,     // 获取群成员列表响应
-    MSG_INVITE_TO_GROUP_REQ,        // 邀请加入群聊请求
-    MSG_INVITE_TO_GROUP_NOTIFY,     // 邀请加入群聊通知
-    MSG_REMOVE_FROM_GROUP_REQ,      // 移除群成员请求
-    MSG_REMOVE_FROM_GROUP_NOTIFY,   // 移除群成员通知
-    MSG_LEAVE_GROUP_REQ,            // 退出群聊请求
-    MSG_LEAVE_GROUP_RESP,           // 退出群聊响应
-    MSG_GROUP_CHAT_TEXT,            // 群聊消息
-    MSG_GROUP_CHAT_HISTORY_REQ,     // 群聊历史消息请求
-    MSG_GROUP_CHAT_HISTORY_RESP     // 群聊历史消息响应
+    MSG_UNDEFINED = 0,               // 未定义类型
+    MSG_HEARTBEAT_REQ,               // 心跳包请求 (维持长连接保活)
+    MSG_HEARTBEAT_RESP,              // 心跳包响应
+    MSG_REGISTER_REQ,                // 账号注册请求
+    MSG_REGISTER_RESP,               // 账号注册响应
+    MSG_LOGIN_REQ,                   // 登录请求
+    MSG_LOGIN_SALT_REQ,              // 登录获取盐值请求 (用于密码安全传输)
+    MSG_LOGIN_SALT_RESP,             // 登录获取盐值响应
+    MSG_LOGIN_RESP,                  // 登录响应 (返回登录结果及用户ID)
+    MSG_FRIEND_LIST_REQ,             // 获取好友列表请求
+    MSG_FRIEND_LIST_RESP,            // 获取好友列表响应
+    MSG_FRIEND_STATUS_NOTIFY,        // 好友状态变更通知 (上下线状态更新)
+    MSG_CHAT_HISTORY_REQ,            // 单聊历史记录请求
+    MSG_CHAT_HISTORY_RESP,           // 单聊历史记录响应
+    MSG_SEARCH_USER_REQ,             // 搜索用户请求 (通过用户名/ID查找)
+    MSG_SEARCH_USER_RESP,            // 搜索用户响应
+    MSG_ADD_FRIEND_REQ,              // 添加好友请求 (发起方发送)
+    MSG_ADD_FRIEND_NOTIFY,           // 添加好友通知 (服务端推送给被添加方)
+    MSG_ADD_FRIEND_RESP,             // 添加好友响应 (被加方处理后回复)
+    MSG_ADD_FRIEND_RESULT,           // 添加好友最终结果通知
+    MSG_DELETE_FRIEND_REQ,           // 删除好友请求
+    MSG_DELETE_FRIEND_RESP,          // 删除好友响应
+    MSG_CHAT_TEXT,                   // 单聊消息 (包含文本、图片、发送文件)
+    MSG_FILE_TRANSFER_REQ,           // 文件传输请求 (握手)
+    MSG_FILE_TRANSFER_RESP,          // 文件传输响应 (同意或拒绝)
+    MSG_FILE_CHUNK,                  // 文件传输数据分片/块 (传输实际数据)
+    MSG_FILE_TRANSFER_ACK,           // 文件块传输接收确认 (ACK)
+    MSG_FILE_TRANSFER_CANCEL,        // 文件传输取消/中断
+    MSG_FILE_RESUME_REQ,             // 文件断点续传请求
+    MSG_FILE_RESUME_RESP,            // 文件断点续传响应进度
+    MSG_FILE_VERIFY_REQ,             // 文件校验请求 (传输完成后MD5校验)
+    MSG_FILE_VERIFY_RESP,            // 文件校验结果响应
+    MSG_CREATE_GROUP_REQ,            // 创建群组请求
+    MSG_CREATE_GROUP_RESP,           // 创建群组响应
+    MSG_GROUP_LIST_REQ,              // 获取群组列表请求
+    MSG_GROUP_LIST_RESP,             // 获取群组列表响应
+    MSG_GROUP_MEMBER_LIST_REQ,       // 获取群成员列表请求
+    MSG_GROUP_MEMBER_LIST_RESP,      // 获取群成员列表响应
+    MSG_INVITE_TO_GROUP_REQ,         // 邀请加入群组请求
+    MSG_INVITE_TO_GROUP_NOTIFY,      // 邀请加入群组通知 (推送给被邀请者)
+    MSG_LEAVE_GROUP_REQ,             // 主动退出群组请求
+    MSG_LEAVE_GROUP_RESP,            // 主动退出群组响应
+    MSG_GROUP_CHAT_TEXT,             // 群聊消息 (包含文本、图片等)
+    MSG_GROUP_CHAT_HISTORY_REQ,      // 群聊历史记录请求
+    MSG_GROUP_CHAT_HISTORY_RESP      // 群聊历史记录响应
 };
 
-// 定义协议头部
+constexpr uint32_t PDU_MAGIC = 0xABCD1234;
+
+/*
+ * 包类型/数据包头部结构 (Packet Header Structure)
+ * 采用类似 TLV (Type-Length-Value) 的设计：
+ * 完整的网络数据包 = PDUHeader (固定包头) + 具体业务数据载荷 (包体 Body)
+ */
 #pragma pack(push,1)
 struct PDUHeader
 {
-    uint32_t total_len;     // 整个数据包的长度（包括Header + Body）
-    uint32_t msg_type;      // 消息类型
-    uint32_t dest_id;       // 目标用户id
-    uint32_t src_id;        // 发送用户的id
+    uint32_t magic;     // 协议魔数，检验数据包合法性，辅助处理粘包/半包
+    uint32_t total_len; // 数据包总长度 (PDUHeader包头长度 + 包体长度)
+    uint32_t msg_type;  // 具体的消息类型，对应 MessageType 枚举
+    uint32_t dest_id;   // 目标用户ID (如接收方，0可代表服务端或广播)
+    uint32_t src_id;    // 发送方用户ID
 };
 #pragma pack(pop)
 
-// body 第一个字节表示消息子类型(文本消息/图片消息)
+/*
+ * 聊天消息载荷的子包类型
+ */
 enum ChatSubType : char {
-    SUB_TEXT  = 0,
-    SUB_IMAGE = 1,
-    SUB_FILE = 2
+    SUB_TEXT  = 0, // 文本消息包
+    SUB_IMAGE = 1, // 图片消息包
+    SUB_FILE = 2   // 文件消息包
 };
 
-// 加密标记位（用于标识消息是否加密）
-// 将子类型与此标记进行OR运算来标识加密消息
-// 例如：SUB_TEXT | ENCRYPTED_FLAG = 0x80 表示加密的文本消息
 const char ENCRYPTED_FLAG = (char)0x80;
 
-// 辅助函数：检查子类型是否标记为加密
 inline bool isSubTypeEncrypted(char subType) {
     return (subType & ENCRYPTED_FLAG) != 0;
 }
 
-// 辅助函数：获取原始子类型（去除加密标记）
 inline char getOriginalSubType(char subType) {
     return subType & ~ENCRYPTED_FLAG;
 }
 
-// 辅助函数：添加加密标记到子类型
 inline char addEncryptedFlag(char subType) {
     return subType | ENCRYPTED_FLAG;
 }
 
-// 心跳包结构
+// ==================== 基础与认证协议结构体 ====================
+
+// 心跳包载荷：定时发送，携带客户端当前时间戳协助检查网络延迟与连接保活
 struct HeartbeatPacket {
-    uint64_t timestamp;     // 时间戳
+    uint64_t timestamp;
 };
 
-// 登录请求包
+#pragma pack(push,1)
+
+// 登录请求包载荷：包含用户名和由于安全加密生成的密码哈希
 struct LoginReq
 {
-    char userName[32];      // 登录名
-    char password[32];      // 登录密码
+    char userName[32];
+    char passwordHash[64];
 };
 
-// 注册请求包
+// 获取登录安全盐值请求：登录两段式认证的第一步
+struct LoginSaltReq
+{
+    char userName[32];
+};
+
+// 获取登录安全盐值响应：服务端返回给用户的唯一防重放盐值
+struct LoginSaltResp
+{
+    int result;
+    char salt[64];
+};
+
+// 注册请求包载荷：注册账号所需的用户名、哈希处理后的密码及使用的加密盐值
 struct RegisterReq
 {
-    char userName[32];      // 用户名
-    char passwordHash[64];  // Base64编码的密码哈希值
-    char salt[64];          // Base64编码的盐值
+    char userName[32];
+    char passwordHash[64];
+    char salt[64];
 };
 
-// 登录/注册 响应包
+// 登录响应包载荷：返回登录成功与否的结果状态及服务端分配的全局User ID
 struct LoginResp
 {
-    int result;             // 0=失败，1=成功,2=已在线
-    int userId;             // 请求成功返回用户id
+    int result;
+    int userId;
 };
 
-// 好友包
+// ==================== 好友与用户关系结构体 ====================
+
+// 好友信息数据元：用于好友列表返回时的单个好友基本档案
 struct FriendInfo
 {
-    int id;                 // 好友id
-    char userName[32];      // 好友名称
-    int status;             // 1=在线，0=离线
-    qint64 lastMsgTime;     // 最后一条消息的时间戳（秒）
+    int id;
+    char userName[32];
+    int status;
+    qint64 lastMsgTime;
 };
 
-// 搜索请求
+// 用户搜索请求包：通过填入用户名或账号关键字来模糊匹配用户
 struct SearchReq {
     char keyword[32];
 };
 
-// 状态变更通知包
+// 好友在线状态更新通知：服务端推送好友上下线变化
 struct FriendStatusChange {
-    int uid;                // 谁的状态变了
-    int status;             // 变为什么 (1=上线, 0=离线)
+    int uid;
+    int status;
 };
 
-// 添加好友请求包
+// 发起添加好友请求包：携带需要添加的目标用户ID
 struct AddFriendReq {
-    int targetId;           // 我想加谁
-    // char remark[32];     // 可选：附言，暂时留空
+    int targetId;
 };
 
-// 添加好友通知包
+// 添加好友服务端通知包：服务端主动推给被加方的申请消息
 struct AddFriendNotify {
-    int requesterId;            // 谁想加我
+    int requesterId;
     char requesterName[32];
 };
 
-// 处理好友回复（好友同意/拒绝）包
+// 处理添加好友确认响应包：被加方同意或拒绝后发送给服务端
 struct AddFriendResp {
     int requesterId;
-    bool accepted;      // true=同意，false=拒绝
+    bool accepted;
 };
 
 // 删除好友请求包
 struct DeleteFriendReq {
-    int targetId;           // 要删除的好友ID
+    int targetId;
 };
 
-// 删除好友响应包
+// 删除好友动作回调响应包
 struct DeleteFriendResp {
-    int result;             // 0=失败，1=成功
-    int targetId;           // 被删除的好友ID
+    int result;
+    int targetId;
 };
 
-// 文件传输请求结构
+// ==================== 文件传输(P2P业务扩展)结构体 ====================
+
+// 发起大文件传输请求：握手阶段，向对方告知文件名、总大小、切片总数和专属File ID
 struct FileTransferReq {
-    char fileName[256];      // 文件名
-    quint64 fileSize;        // 文件大小
-    quint32 totalChunks;     // 总分片数
-    char fileId[64];         // 文件唯一标识(MD5或UUID)
+    char fileName[256];
+    quint64 fileSize;
+    quint32 totalChunks;
+    char fileId[64];
 };
 
-// 文件传输响应结构
+// 接收方文件传输决策响应：返回是否同意接收该文件
 struct FileTransferResp {
-    char fileId[64];         // 文件ID
-    quint8 accepted;         // 是否接受 1=接受 0=拒绝
+    char fileId[64];
+    quint8 accepted;
 };
 
-// 文件分片数据结构
+// 文件实际数据载荷分片元组：大文件拆分成此块状进行连续传输
 struct FileChunk {
-    char fileId[64];         // 文件ID
-    quint32 chunkIndex;      // 当前分片索引
-    quint32 chunkSize;       // 当前分片大小
-    // 后面跟着实际的文件数据
+    char fileId[64];
+    quint32 chunkIndex;
+    quint32 chunkSize;
 };
 
-// 文件传输确认结构
+// 文件分片抵达确应包：每接受一定的数据块，接收方可返回ACK确认接收进度
 struct FileTransferAck {
-    char fileId[64];         // 文件ID
-    quint32 chunkIndex;      // 已接收的分片索引
+    char fileId[64];
+    quint32 chunkIndex;
 };
 
-// 文件传输取消结构
+// 中断/取消文件传输通知：通信双方任一方取消传输将发送此指令及原因
 struct FileTransferCancel {
-    char fileId[64];         // 文件ID
-    quint8 reason;           // 取消原因 0=用户取消 1=错误
+    char fileId[64];
+    quint8 reason;
 };
 
-// 恢复传输请求结构
+// 请求断点续传指令：在未完成传输后重新链接请求恢复传输某个File ID对应的文件
 struct FileResumeReq {
-    char fileId[64];         // 文件ID
+    char fileId[64];
 };
 
-// 恢复传输响应结构
+// 断点续传参数响应：返回接收方目前持有了多少分片以此来决定从哪个Chunk续传
 struct FileResumeResp {
-    char fileId[64];         // 文件ID
-    quint8 canResume;        // 是否可以恢复 1=可以 0=不可以
-    quint32 totalChunks;     // 总分片数
-    quint32 receivedChunks;  // 已接收分片数
-    // 后面跟着已接收分片的位图数据
-    // 位图大小 = (totalChunks + 7) / 8 字节
+    char fileId[64];
+    quint8 canResume;
+    quint32 totalChunks;
+    quint32 receivedChunks;
 };
 
-// 文件校验请求结构
+// 文件防篡改完整性校验请求：文件全部传完后，校验文件全体数据的MD5值
 struct FileVerifyReq {
-    char fileId[64];         // 文件ID
-    char fileMD5[33];        // 文件MD5值
+    char fileId[64];
+    char fileMD5[33];
 };
 
-// 文件校验响应结构
+// 文件防篡改完整性校验响应：返回MD5是否匹配，即文件在网络传输中是否损坏
 struct FileVerifyResp {
-    char fileId[64];         // 文件ID
-    quint8 verified;         // 校验结果 1=成功 0=失败
+    char fileId[64];
+    quint8 verified;
 };
 
-// 创建群聊请求结构
+// ==================== 群组与多人聊天结构体 ====================
+
+// 创建新群请求
 struct CreateGroupReq {
-    char groupName[64];     // 群名称
+    char groupName[64];
 };
 
-// 创建群聊响应结构
+// 创建新群响应：由服务端分配一个新的Group ID给客户端
 struct CreateGroupResp {
-    int result;             // 0=失败，1=成功
-    int groupId;            // 创建成功返回群ID
+    int result;
+    int groupId;
 };
 
-// 群信息结构
+// 群组信息数据元：常用于组织并显示用户的群联系人列表
 struct GroupInfo {
-    int groupId;            // 群ID
-    char groupName[64];     // 群名称
-    int memberCount;        // 成员数量
-    char creatorName[32];   // 创建者名称
-    qint64 lastMsgTime;     // 最后一条消息的时间戳（秒）
+    int groupId;
+    char groupName[64];
+    int memberCount;
+    char creatorName[32];
+    qint64 lastMsgTime;
 };
 
-// 群成员信息结构
+// 群成员详细信息数据元：在打开群聊面板刷新成员时用到的角色分配状态
 struct GroupMemberInfo {
-    int userId;             // 用户ID
-    char userName[32];      // 用户名
-    int role;               // 角色：0=普通成员，1=管理员，2=群主
-    int status;             // 在线状态：0=离线，1=在线
+    int userId;
+    char userName[32];
+    int role;
+    int status;
 };
 
-// 邀请进群请求结构
+// 拉人入群请求：选定特定目标拉进指定的群聊
 struct InviteToGroupReq {
-    int groupId;            // 群ID
-    int targetUserId;       // 被邀请的用户ID
+    int groupId;
+    int targetUserId;
 };
 
-// 邀请进群通知结构
+// 进群服务端推送通知：服务端发给新组员自己被谁拉入了某个群聊的安全提醒
 struct InviteToGroupNotify {
-    int groupId;            // 群ID
-    char groupName[64];     // 群名称
-    int inviterId;          // 邀请人ID
-    char inviterName[32];   // 邀请人名称
+    int groupId;
+    char groupName[64];
+    int inviterId;
+    char inviterName[32];
 };
 
-// 移除群成员请求结构
-struct RemoveFromGroupReq {
-    int groupId;            // 群ID
-    int targetUserId;       // 被移除的用户ID
-};
-
-// 移除群成员通知结构
-struct RemoveFromGroupNotify {
-    int groupId;            // 群ID
-    char groupName[64];     // 群名称
-    int removedBy;          // 操作人ID
-};
-
-// 退出群聊请求结构
+// 主动退出群聊的退出请求指令
 struct LeaveGroupReq {
-    int groupId;            // 群ID
+    int groupId;
 };
 
-// 退出群聊响应结构
+// 退出群聊是否完成的业务层响应
 struct LeaveGroupResp {
-    int result;             // 0=失败，1=成功
-    int groupId;            // 群ID
+    int result;
+    int groupId;
 };
 
-// 群聊消息结构（包含发送者信息，用于群聊显示发送者用户名）
+// 多人聊天消息包裹的外发壳：附带真实发送者的信息以及群ID路由信息
 struct GroupChatMessage {
-    int groupId;            // 群ID
-    int senderId;           // 发送者ID
-    char senderName[32];    // 发送者用户名
-    // 后面跟实际的消息内容 (subType + content)
+    int groupId;
+    int senderId;
+    char senderName[32];
 };
 
-// 群聊历史消息条目结构
+// 获取远端群聊历史记录的游标及历史返回外壳
 struct GroupChatHistoryItem {
-    int senderId;           // 发送者ID
-    char senderName[32];    // 发送者用户名
-    int contentLen;         // 内容长度
-    // 后面跟实际的消息内容
+    int senderId;
+    char senderName[32];
+    int contentLen;
 };
+#pragma pack(pop)
 
 QByteArray makePacket(uint32_t type, const QByteArray& body, uint32_t src = 0, uint32_t dest = 0);
 

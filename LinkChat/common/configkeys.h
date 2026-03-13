@@ -1,10 +1,9 @@
-#ifndef CONFIGKEYS_H
+﻿#ifndef CONFIGKEYS_H
 #define CONFIGKEYS_H
 
 #include <QString>
 
 namespace ConfigKeys {
-    // 服务器配置
     namespace Server {
         const QString PORT = "server.port";
         const QString MAX_CONNECTIONS = "server.max_connections";
@@ -25,7 +24,6 @@ namespace ConfigKeys {
         }
     }
     
-    // 客户端配置
     namespace Client {
         const QString SERVER_ADDRESS = "client.server_address";
         const QString SERVER_PORT = "client.server_port";

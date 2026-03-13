@@ -1,4 +1,4 @@
-#ifndef GROUPDIALOG_H
+﻿#ifndef GROUPDIALOG_H
 #define GROUPDIALOG_H
 
 #include <QDialog>
@@ -8,11 +8,9 @@ namespace Ui {
 class GroupDialog;
 }
 
-// 定义一个简单的结构体传参用
 struct FriendSelectInfo {
     int id;
     QString name;
-    // QIcon avatar; // 头像
 };
 
 class GroupDialog : public QDialog
@@ -26,7 +24,6 @@ public:
     QString getGroupName() const;
     QList<int> getSelctFriendIds() const;
 protected:
-    // 重写鼠标事件
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
 
@@ -42,7 +39,7 @@ private slots:
 
 private:
     Ui::GroupDialog *ui;
-    QPoint m_dragPosition;      // 记录鼠标按下时的相对位置
+    QPoint m_dragPosition;
     QList<FriendSelectInfo> m_friends;
     QList<int> m_selectFriendIds;
 

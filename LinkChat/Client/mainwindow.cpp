@@ -1,4 +1,4 @@
-#include "mainwindow.h"
+﻿#include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "networkmanager.h"
 #include "filetransfermanager.h"
@@ -305,9 +305,6 @@ void MainWindow::initUI()
     ui->btnImage->setVisible(false);
     ui->btnFile->setVisible(false);
 
-
-
-    // 在 MainWindow 构造函数里，initUI() 之后加上这句：
     ui->chatList->setMouseTracking(true);
     ui->chatList->viewport()->setAttribute(Qt::WA_Hover);
 
@@ -896,13 +893,9 @@ void MainWindow::updateContactListMode(bool isSessionMode)
 void MainWindow::updateNewFriendsButtonState()
 {
     if (m_hasUnreadFriendRequests) {
-        // 有未读的好友请求，显示一个简单的点
         ui->btnNewFriends->setText("🔔 新朋友 •");
-        ui->btnNewFriends->setStyleSheet("");
     } else {
-        // 没有未读的好友请求，隐藏红点
         ui->btnNewFriends->setText("🔔 新朋友");
-        ui->btnNewFriends->setStyleSheet("");
     }
 }
 
@@ -943,9 +936,6 @@ void MainWindow::onFriendListReceived(QList<FriendInfo> list)
 
         QString status = (info.status == 1)? "[在线]" : "[离线]";
         item->setText(QString("%1 %2").arg(status,QString::fromUtf8(info.userName)));
-
-        // 设置头像
-        // item->setIcon();
 
         ui->contactList->addItem(item);
     }
@@ -1156,10 +1146,6 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
                 }
             }
         }
-        // 同时保存到本地历史记录
-        if (!m_chatHistory[m_currentFriendId].isEmpty() || m_currentFriendId == srcId) {
-            m_chatHistory[srcId].append(msg);
-        }
         
         // 更新最后消息时间
         updateContactLastMsgTime(srcId, QDateTime::currentDateTime());
@@ -1213,10 +1199,6 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
                 }
             }
         }
-        // 同时保存到本地历史记录
-        if (!m_chatHistory[m_currentFriendId].isEmpty() || m_currentFriendId == srcId) {
-            m_chatHistory[srcId].append(msg);
-        }
         
         // 更新最后消息时间
         updateContactLastMsgTime(srcId, QDateTime::currentDateTime());
@@ -1260,26 +1242,21 @@ void MainWindow::onSigChatHistoryReceived(int friendId, const QList<std::tuple<i
 
 void MainWindow::onSigFriendStatusChanged(int uid, int status)
 {
-    // 遍历列表控件的所有项
     for (int i = 0; i < ui->contactList->count(); ++i) {
         QListWidgetItem* item = ui->contactList->item(i);
 
-        int itemUid = item->data(Qt::UserRole).toInt();
+        int itemUid = item->data(ContactDelegate::RoleStatus).toInt();
 
         if (itemUid == uid) {
-            // 更新在线状态
-            QString name = item->data(Qt::UserRole + 1).toString();
+            QString name = item->data(ContactDelegate::RoleName).toString();
 
             if (status == 1) {
                 item->setText(QString("[在线] %1").arg(name));
-                item->setForeground(QBrush(Qt::green)); // 在线变绿
+                item->setForeground(QBrush(Qt::green));
             } else {
                 item->setText(QString("[离线] %1").arg(name));
-                item->setForeground(QBrush(Qt::gray));  // 离线变灰
+                item->setForeground(QBrush(Qt::gray));
             }
-
-            // 重新排序 (可选：让在线的排到最上面)
-            // ui->contactList->sortItems();
             break;
         }
     }
@@ -1504,13 +1481,13 @@ void MainWindow::onSigFileTransferRequest(const QString &fileId, const QString &
 void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
 {
     if (accepted) {
-        // 对方同意接收文件
-
         if(m_pendingFileTransfers.contains(fileId)){
-            // 移除并返回value
             QString filePath = m_pendingFileTransfers.take(fileId);
+            int targetFriendId = m_pendingFileTransferTargets.take(fileId);
+            if (targetFriendId <= 0) {
+                targetFriendId = m_currentFriendId;
+            }
 
-            // 检查是否是断点传续
             TransferState state = TransferStateManager::instance().loadTransferState(fileId);
             if(!state.fileId.isEmpty() && state.completedChunks.size() > 0){
                 LOG_INFO_FMT("恢复文件传输 %1（从第 %2 个分片开始）",state.fileName,state.completedChunks.size());
@@ -1520,16 +1497,22 @@ void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
             ChatMessage msg(displayText,true,":/res/me.jpg");
             m_chatModel->addMessage(msg);
             ui->chatList->scrollToBottom();
-            
-            // 开始传输文件
-            FileTransferManager::instance().startSendFile(fileId,filePath,m_currentFriendId);
-            // QMessageBox::information(this, "成功", "对方已接受文件传输,开始发送...");
+
+            const bool notInTargetChat = (m_currentFriendId != targetFriendId) || m_isGroupChat;
+            if (notInTargetChat) {
+                QMessageBox::information(
+                    this,
+                    "文件传输提示",
+                    QString("好友 %1 已同意接收文件，传输将在后台开始。").arg(targetFriendId));
+            }
+
+            FileTransferManager::instance().startSendFile(fileId, filePath, targetFriendId);
         }else{
             LOG_WARN_FMT("File path not found for fileId:%1",fileId);
         }
     } else {
-        // 对方拒绝接收文件
         m_pendingFileTransfers.remove(fileId);
+        m_pendingFileTransferTargets.remove(fileId);
         QMessageBox::warning(this, "被拒绝", "对方拒绝接收文件");
     }
 }
@@ -1549,8 +1532,7 @@ void MainWindow::onFileTransferProgress(const QString &fileId, int percent, qint
     Q_UNUSED(sent)
     Q_UNUSED(total)
 
-    // 后续完善进度条
-    qDebug() << "[UI] Transfer progress:" << percent << "%";
+    LOG_DEBUG(QString("[UI] Transfer progress: %1%").arg(percent));
 }
 
 void MainWindow::onFileTransferCompleted(const QString &fileId)
@@ -1605,9 +1587,8 @@ void MainWindow::onFileReceiveChunk(const QString &fileId, int chunkIndex, const
 
 void MainWindow::onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total)
 {
-    // 可以在UI上显示进度条
-    qDebug() << "[UI] Receive progress:" << percent << "%"
-             << received << "/" << total << "bytes";
+    Q_UNUSED(fileId)
+    LOG_DEBUG(QString("[UI] Receive progress: %1% (%2/%3 bytes)").arg(percent).arg(received).arg(total));
 }
 
 void MainWindow::onFileReceiveCompleted(const QString &fileId, const QString &savePath)
@@ -2401,6 +2382,7 @@ void MainWindow::on_btnFile_clicked()
     // 先生成文件id，等对方同意后再传输文件
     QString fileId = FileTransferManager::instance().generateFileId(filePath);
     m_pendingFileTransfers[fileId] = filePath;
+    m_pendingFileTransferTargets[fileId] = m_currentFriendId;
 
     // 先发送文件传输请求给对方
     FileTransferReq req;

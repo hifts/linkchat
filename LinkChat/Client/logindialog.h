@@ -1,7 +1,8 @@
-#ifndef LOGINDIALOG_H
+﻿#ifndef LOGINDIALOG_H
 #define LOGINDIALOG_H
 
 #include <QDialog>
+#include <QByteArray>
 
 namespace Ui {
 class LoginDialog;
@@ -18,10 +19,9 @@ public:
     int loginUid() const;
     QString loginUserName() const;
 
-    QString loginPassword() const;
+    QString loginCredentialHash() const;
 
 protected:
-    // 重写鼠标事件
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
 
@@ -33,13 +33,18 @@ private slots:
     void on_btnClose_clicked();
 
     void onSigLoginResult(bool success,int uid,int errorCode);
+    void onSigLoginSaltReceived(bool success, const QByteArray &saltBase64);
 
 private:
     Ui::LoginDialog *ui;
-    int m_loginUid = 0;             // 登录成功时保存
-    QString m_loginUserName;        // 登录用户名
-    QString m_loginPassword;
-    QPoint m_dragPosition;          // 记录鼠标按下时的相对位置
+    int m_loginUid = 0;
+    QString m_loginUserName;
+    QString m_loginCredentialHash;
+    QString m_pendingUserName;
+    QString m_pendingPassword;
+    QString m_pendingCredentialHash;
+    bool m_waitingSalt = false;
+    QPoint m_dragPosition;
 };
 
 #endif // LOGINDIALOG_H

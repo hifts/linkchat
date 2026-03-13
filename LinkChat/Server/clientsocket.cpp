@@ -1,4 +1,4 @@
-#include "clientsocket.h"
+﻿#include "clientsocket.h"
 #include "dbmanager.h"
 #include "tcpserver.h"
 #include "logger.h"
@@ -9,12 +9,10 @@
 ClientSocket::ClientSocket(QObject *parent)
     : QTcpSocket{parent}
 {
-    // 有数据过来就处理
     connect(this,&QTcpSocket::readyRead,this,&ClientSocket::onReadyRead);
 
     connect(this,&QTcpSocket::disconnected,this,[this](){
         if(this->m_uid != 0){
-            // 处理用户下线
             TcpServer::instance().userLogout(m_uid);
 
             notifyFriends(0);
@@ -24,44 +22,70 @@ ClientSocket::ClientSocket(QObject *parent)
 
 void ClientSocket::onReadyRead()
 {
-    // 把收到的数据追加到缓冲区
     m_buffer.append(this->readAll());
 
-    while(m_buffer.size() >= (int)sizeof(PDUHeader)){
-
-        // 先获取数据包的长度(总包长)
-        PDUHeader *header = (PDUHeader*)m_buffer.data();
-        uint32_t totalLen = header->total_len;
-
-        // 如果缓冲区的数据不够一个包长，说明包没接收完，退出循环等待下一次数据
-        if(m_buffer.size() < (int)totalLen){
-            break;
+    while (m_buffer.size() >= (int)sizeof(PDUHeader)) {
+        while (m_buffer.size() >= (int)sizeof(uint32_t)) {
+            uint32_t magic = 0;
+            memcpy(&magic, m_buffer.data(), sizeof(uint32_t));
+            if (magic == PDU_MAGIC) break;
+            
+            int nextIdx = -1;
+            for (int i = 1; i <= m_buffer.size() - (int)sizeof(uint32_t); ++i) {
+                uint32_t m = 0;
+                memcpy(&m, m_buffer.constData() + i, sizeof(uint32_t));
+                if (m == PDU_MAGIC) {
+                    nextIdx = i;
+                    break;
+                }
+            }
+            
+            if (nextIdx > 0) {
+                qWarning("[Server] Packet resync: skipping %d bytes to next magic", nextIdx);
+                m_buffer.remove(0, nextIdx);
+            } else {
+                qWarning("[Server] Packet resync: magic not found, dropping buffer except last 3 bytes");
+                int keep = qMin(3, m_buffer.size());
+                m_buffer.remove(0, m_buffer.size() - keep);
+            }
         }
 
-        // 获取body部分（总长 - 头部大小）
-        QByteArray bodyData = m_buffer.mid(sizeof(PDUHeader),totalLen - sizeof(PDUHeader));
-        uint32_t msgType = header->msg_type;
+        if (m_buffer.size() < (int)sizeof(PDUHeader)) break;
+
+        PDUHeader header;
+        memcpy(&header, m_buffer.data(), sizeof(PDUHeader));
+        uint32_t totalLen = header.total_len;
+
+        const uint32_t MAX_PACKET_LEN = 50u * 1024u * 1024u;
+        if (totalLen < sizeof(PDUHeader) || totalLen > MAX_PACKET_LEN) {
+            qWarning("[Server] Invalid packet length: %u, skipping magic and resyncing", totalLen);
+            m_buffer.remove(0, sizeof(uint32_t));
+            continue;
+        }
+
+        if (m_buffer.size() < (int)totalLen) break;
+
+        QByteArray bodyData = m_buffer.mid(sizeof(PDUHeader), totalLen - sizeof(PDUHeader));
+        uint32_t msgType = header.msg_type;
+        uint32_t srcId   = header.src_id;
+        uint32_t destId  = header.dest_id;
+
+        m_buffer.remove(0, totalLen);
 
         switch (msgType) {
         case MSG_HEARTBEAT_REQ:{
-            // 心跳包
             this->write(makePacket(MSG_HEARTBEAT_RESP,QByteArray()));
             break;
         }
         case MSG_REGISTER_REQ:{
-            // 解包注册请求
+            if (bodyData.size() < (int)sizeof(RegisterReq)) break;
             RegisterReq *req = (RegisterReq*)bodyData.data();
 
-            // 注意：客户端已经发送了Base64编码的passwordHash和salt
-            // 所以这里直接使用字符串，不需要再次编码
             QString passwordHashBase64 = QString::fromUtf8(req->passwordHash);
             QString saltBase64 = QString::fromUtf8(req->salt);
             
             qDebug() << "[Server] Registration request for user:" << req->userName;
-            qDebug() << "[Server] Password hash length:" << passwordHashBase64.length() 
-                     << "Salt length:" << saltBase64.length();
 
-            // 需要先解码
             QByteArray salt = QByteArray::fromBase64(saltBase64.toUtf8());
             
             bool ok = DBManager::instance().handelRegister(
@@ -70,30 +94,45 @@ void ClientSocket::onReadyRead()
                 salt
             );
 
-            // 回包
             LoginResp resp;
-            resp.result = ok? 1 : 0;    // 1=成功，0=失败
+            resp.result = ok? 1 : 0;
             resp.userId = 0;
             this->write(makePacket(MSG_REGISTER_RESP,QByteArray((char*)&resp,sizeof(LoginResp))));
             break;
         }
+        case MSG_LOGIN_SALT_REQ:{
+            if (bodyData.size() < (int)sizeof(LoginSaltReq)) break;
+            LoginSaltReq *req = (LoginSaltReq*)bodyData.data();
+
+            QByteArray salt;
+            const bool ok = DBManager::instance().getUserSalt(req->userName, salt);
+
+            LoginSaltResp resp;
+            memset(&resp, 0, sizeof(resp));
+            resp.result = ok ? 1 : 0;
+
+            if (ok) {
+                const QByteArray saltBase64 = salt.toBase64();
+                strncpy(resp.salt, saltBase64.constData(), sizeof(resp.salt) - 1);
+            }
+
+            this->write(makePacket(MSG_LOGIN_SALT_RESP, QByteArray((char*)&resp, sizeof(resp))));
+            break;
+        }
         case MSG_LOGIN_REQ:{
+            if (bodyData.size() < (int)sizeof(LoginReq)) break;
             LoginReq *req = (LoginReq*)bodyData.data();
 
-            // 记录用户在数据库中的id和用户名
             int uid = -1;
             QString name = req->userName;
             QByteArray salt, passwordHash;
 
-            // 验证用户登录（使用加密密码）
-            bool ok = DBManager::instance().handleLogin(req->userName, req->password, uid, salt, passwordHash);
+            bool ok = DBManager::instance().handleLogin(req->userName, req->passwordHash, uid, salt, passwordHash);
 
-            // 回包
             LoginResp resp;
             resp.result = ok? 1 : 0;
             resp.userId = uid;
 
-            // 登录成功就记录下当前socket属于哪个用户的以及用户名
             if(ok){
 
                 if(TcpServer::instance().isOnline(uid)){
@@ -107,16 +146,13 @@ void ClientSocket::onReadyRead()
                 this->m_uid = uid;
                 this->m_userName = name;
 
-                // 处理用户上线
                 TcpServer::instance().userLogin(uid,this);
                 notifyFriends(1);
 
-                // 登录成功后，推送离线好友请求和离线消息
                 auto pengingRequests = DBManager::instance().getPendingRequests(uid);
                 auto offlineMsgs = DBManager::instance().getAndClearOfflineMessages(uid);
                 auto groupOfflineMsgs = DBManager::instance().getAndClearGroupOfflineMessages(uid);
 
-                // 逐条消息推送(延迟推送，避免客户端没初始化就推送导致消息缺失)
                 if(!offlineMsgs.isEmpty() || !pengingRequests.isEmpty() || !groupOfflineMsgs.isEmpty()){
                     QTimer::singleShot(1500, this, [=](){
                         pushFriendRequests(pengingRequests);
@@ -130,58 +166,49 @@ void ClientSocket::onReadyRead()
         case MSG_FRIEND_LIST_REQ:{
             int currentUid = this->m_uid;
 
-            // 查当前用户的好友列表
             QList<FriendInfo> friendList = DBManager::instance().getFriendList(currentUid);
 
-            // 回包
             int count = friendList.size();
-            // 包主体的大小（好友列表信息）
             int bodyLen = sizeof(int) + count * sizeof(FriendInfo);
 
-            QByteArray bodyData;
-            bodyData.resize(bodyLen);
+            QByteArray resBody;
+            resBody.resize(bodyLen);
 
-            char *ptr = bodyData.data();
-            memcpy(ptr,&count,sizeof(int));     // 先拷贝好友数量
-            ptr += sizeof(int);                 // 偏移存放好友数量的空间后再继续存放好友信息
+            char *ptr = resBody.data();
+            memcpy(ptr,&count,sizeof(int));
+            ptr += sizeof(int);
 
-            // 拷贝每一位好友信息
             for(const auto &info : friendList){
                 memcpy(ptr,&info,sizeof(FriendInfo));
                 ptr += sizeof(FriendInfo);
             }
 
-            this->write(makePacket(MSG_FRIEND_LIST_RESP,bodyData));
+            this->write(makePacket(MSG_FRIEND_LIST_RESP,resBody));
             break;
         }
         case MSG_CHAT_TEXT:{
-            // 获取要发送目的的用户id
-            int targetId = header->dest_id;
+            int targetId = destId;
 
-            // 消息存入数据库
             DBManager::instance().saveChatMessage(this->m_uid,targetId,bodyData);
 
-            // 查找用户是否在线
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
-            // 转发给目标用户
             if(targetSocket != nullptr){
                 this->writePacket(targetSocket,MSG_CHAT_TEXT,bodyData,this->m_uid,targetId);
             }else{
-                // 离线时存储消息到数据库
                 DBManager::instance().saveOfflineMessage(this->m_uid,targetId,bodyData);
             }
             break;
         }
         case MSG_CHAT_HISTORY_REQ:{
             if(bodyData.size() < 4){
-                return;
+                break;
             }
             int friendId = *(int*)bodyData.constData();
 
             auto history = DBManager::instance().getChatHistory(m_uid,friendId,200);
-            QByteArray resp;
-            QDataStream out(&resp,QIODevice::WriteOnly);
+            QByteArray resBytes;
+            QDataStream out(&resBytes,QIODevice::WriteOnly);
             out.setByteOrder(QDataStream::LittleEndian);
             out<<quint32(history.size());
 
@@ -191,91 +218,79 @@ void ClientSocket::onReadyRead()
                 out << quint32(std::get<1>(item).size());  // content size
                 out.writeRawData(std::get<1>(item).constData(), std::get<1>(item).size());  // content
             }
-            this->write(makePacket(MSG_CHAT_HISTORY_RESP, resp, friendId, m_uid));
+            this->write(makePacket(MSG_CHAT_HISTORY_RESP, resBytes, friendId, m_uid));
             break;
         }
         case MSG_SEARCH_USER_REQ:{
+            if (bodyData.size() < (int)sizeof(SearchReq)) break;
             SearchReq *req = (SearchReq*)bodyData.data();
             QString keyword = QString::fromUtf8(req->keyword).trimmed();
 
-            QString msg = QString("User %1 searching for: %2").arg(m_uid).arg(keyword);
-            // Search request received
-
-            // 查库
             QList<FriendInfo> resultList = DBManager::instance().searchUsers(keyword,m_uid);
 
-            // 组装回包
             int count = resultList.size();
             int bodyLen = sizeof(int) + sizeof(FriendInfo) * count;
 
-            QByteArray respBody;
-            respBody.resize(bodyLen);
+            QByteArray searchRespBody;
+            searchRespBody.resize(bodyLen);
 
-            char *ptr = respBody.data();
+            char *ptr = searchRespBody.data();
 
-            // 写入数量
             memcpy(ptr, &count, sizeof(int));
             ptr += sizeof(int);
 
-            // 写入每一个用户信息
             for(const auto &info : resultList){
                 memcpy(ptr, &info, sizeof(FriendInfo));
                 ptr += sizeof(FriendInfo);
             }
 
-            this->write(makePacket(MSG_SEARCH_USER_RESP,respBody));
+            this->write(makePacket(MSG_SEARCH_USER_RESP,searchRespBody));
             break;
         }
         case MSG_ADD_FRIEND_REQ:{
+            if (bodyData.size() < (int)sizeof(AddFriendReq)) break;
             AddFriendReq *req = (AddFriendReq*)bodyData.data();
 
-            // 对方id和请求者的id
             int targetId = req->targetId;
             int requesterId = this->m_uid;
             QString name = this->m_userName;
 
-            // 检查是否已经是好友
             if (DBManager::instance().isFriend(requesterId, targetId)) {
                 break;
             }
 
-            // 检查是否已有待处理的请求
             if (DBManager::instance().hasPendingRequest(requesterId, targetId)) {
                 break;
             }
 
-            // 请求存入数据库
             DBManager::instance().saveFriendRequest(requesterId,name,targetId);
 
-            // 直接转发给目标用户（如果在线）
             ClientSocket *target = TcpServer::instance().getUserSocket(targetId);
             if(target){
                 AddFriendNotify notify;
                 notify.requesterId = requesterId;
 
-                strncpy(notify.requesterName,name.toStdString().c_str(),32);
+                strncpy(notify.requesterName,name.toUtf8().constData(),31);
+                notify.requesterName[31] = '\0';
 
                 target->write(makePacket(MSG_ADD_FRIEND_NOTIFY,QByteArray((char*)&notify,sizeof(AddFriendNotify)),0,targetId));
             }
             break;
         }
         case MSG_ADD_FRIEND_RESP:{
+            if (bodyData.size() < (int)sizeof(AddFriendResp)) break;
             AddFriendResp *resp = (AddFriendResp*)bodyData.data();
 
-            // 发起请求的人，是否同意，当前用户即点了同意/拒绝的人
             int requesterId = resp->requesterId;
             bool accepted = resp->accepted;
             int responderId = this->m_uid;
 
-            // 同意，写入数据库
             if(accepted){
                 DBManager::instance().addFriend(requesterId,responderId);
             }
 
-            // 更新数据库请求状态
             DBManager::instance().markRequestProcessed(requesterId, responderId,accepted);
 
-            // 转发结果给请求者
             ClientSocket *requesterSocket = TcpServer::instance().getUserSocket(requesterId);
             if (requesterSocket) {
                 requesterSocket->write(makePacket(MSG_ADD_FRIEND_RESULT, bodyData, 0, requesterId));
@@ -283,80 +298,55 @@ void ClientSocket::onReadyRead()
             break;
         }
         case MSG_DELETE_FRIEND_REQ:{
+            if (bodyData.size() < (int)sizeof(DeleteFriendReq)) break;
             DeleteFriendReq *req = (DeleteFriendReq*)bodyData.data();
             
             int targetId = req->targetId;
             int requesterId = this->m_uid;
             
-            // 删除好友关系
             bool success = DBManager::instance().deleteFriend(requesterId, targetId);
             
-            // 构造响应
-            DeleteFriendResp resp;
-            resp.result = success ? 1 : 0;
-            resp.targetId = targetId;
+            DeleteFriendResp res;
+            res.result = success ? 1 : 0;
+            res.targetId = targetId;
             
-            // 发送响应给请求者
-            this->write(makePacket(MSG_DELETE_FRIEND_RESP, QByteArray((char*)&resp, sizeof(DeleteFriendResp))));
-            
-            // 不通知被删除方，静默删除
+            this->write(makePacket(MSG_DELETE_FRIEND_RESP, QByteArray((char*)&res, sizeof(DeleteFriendResp))));
             break;
         }
         case MSG_FILE_TRANSFER_REQ:{
-            // 文件传输请求 - 直接转发给目标用户
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if(targetSocket){
                 this->writePacket(targetSocket,MSG_FILE_TRANSFER_REQ,bodyData,this->m_uid,targetId);
-            }else{
-                // 不在线
             }
             break;
         }
         case MSG_FILE_TRANSFER_RESP: {
-            // 文件传输响应 - 转发给发送者
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if (targetSocket) {
                 this->writePacket(targetSocket, MSG_FILE_TRANSFER_RESP,bodyData, this->m_uid, targetId);
-
-                FileTransferResp *resp = (FileTransferResp*)bodyData.data();
-                qDebug() << "[Server] Forwarded file transfer response, accepted:"
-                         << (resp->accepted == 1);
             }
             break;
         }
         case MSG_FILE_CHUNK:{
-            // 文件传输分片 - 转发给发送者
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if(targetSocket){
                 this->writePacket(targetSocket,MSG_FILE_CHUNK,bodyData,this->m_uid,targetId);
-
-                // 每100个分片打印一次日志，避免日志刷屏
-                FileChunk *chunk = (FileChunk*)bodyData.data();
-                if (chunk->chunkIndex % 100 == 0) {
-                    QString msg = QString("Forwarding file chunk %1 from user %2").arg(chunk->chunkIndex,targetId);
-                    LOG_INFO(msg);
-                }
-            }else{
-                // 目标用户不在线，记录日志
             }
             break;
         }
         case MSG_FILE_RESUME_REQ: {
-            // 恢复传输请求 - 转发给目标用户
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if(targetSocket){
                 this->writePacket(targetSocket, MSG_FILE_RESUME_REQ, bodyData, this->m_uid, targetId);
-                LOG_INFO_FMT("Forwarding file resume request to user %1", targetId);
             }else{
-                // 目标用户不在线，返回无法恢复
                 FileResumeResp resp;
                 memset(&resp, 0, sizeof(resp));
                 if(bodyData.size() >= (int)sizeof(FileResumeReq)){
@@ -369,46 +359,39 @@ void ClientSocket::onReadyRead()
             break;
         }
         case MSG_FILE_RESUME_RESP: {
-            // 恢复传输响应 - 转发给发送者
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if(targetSocket){
                 this->writePacket(targetSocket, MSG_FILE_RESUME_RESP, bodyData, this->m_uid, targetId);
-                LOG_INFO_FMT("Forwarding file resume response to user %1", targetId);
             }
             break;
         }
         case MSG_FILE_VERIFY_REQ: {
-            // 文件校验请求 - 转发给目标用户
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if(targetSocket){
                 this->writePacket(targetSocket, MSG_FILE_VERIFY_REQ, bodyData, this->m_uid, targetId);
-                LOG_INFO_FMT("Forwarding file verify request to user %1", targetId);
             }
             break;
         }
         case MSG_FILE_VERIFY_RESP: {
-            // 文件校验响应 - 转发给发送者
-            int targetId = header->dest_id;
+            int targetId = destId;
             ClientSocket *targetSocket = TcpServer::instance().getUserSocket(targetId);
 
             if(targetSocket){
                 this->writePacket(targetSocket, MSG_FILE_VERIFY_RESP, bodyData, this->m_uid, targetId);
-                LOG_INFO_FMT("Forwarding file verify response to user %1", targetId);
             }
             break;
         }
         case MSG_CREATE_GROUP_REQ: {
-            // 创建群聊请求
+            if (bodyData.size() < (int)sizeof(CreateGroupReq)) break;
             CreateGroupReq *req = (CreateGroupReq*)bodyData.data();
             QString groupName = QString::fromUtf8(req->groupName);
 
             int groupId = DBManager::instance().createGroup(groupName, this->m_uid);
 
-            // 回包
             CreateGroupResp resp;
             resp.result = (groupId > 0) ? 1 : 0;
             resp.groupId = groupId;
@@ -416,15 +399,14 @@ void ClientSocket::onReadyRead()
             break;
         }
         case MSG_GROUP_LIST_REQ: {
-            // 获取用户所在群列表
             QList<GroupInfo> groupList = DBManager::instance().getGroupList(this->m_uid);
 
             int count = groupList.size();
             int bodyLen = sizeof(int) + count * sizeof(GroupInfo);
 
-            QByteArray respBody;
-            respBody.resize(bodyLen);
-            char *ptr = respBody.data();
+            QByteArray groupRespBody;
+            groupRespBody.resize(bodyLen);
+            char *ptr = groupRespBody.data();
 
             memcpy(ptr, &count, sizeof(int));
             ptr += sizeof(int);
@@ -434,11 +416,10 @@ void ClientSocket::onReadyRead()
                 ptr += sizeof(GroupInfo);
             }
 
-            this->write(makePacket(MSG_GROUP_LIST_RESP, respBody));
+            this->write(makePacket(MSG_GROUP_LIST_RESP, groupRespBody));
             break;
         }
         case MSG_GROUP_MEMBER_LIST_REQ: {
-            // 获取群成员列表
             if (bodyData.size() < 4) break;
             int groupId = *(int*)bodyData.constData();
 
@@ -447,9 +428,9 @@ void ClientSocket::onReadyRead()
             int count = memberList.size();
             int bodyLen = sizeof(int) + sizeof(int) + count * sizeof(GroupMemberInfo);
 
-            QByteArray respBody;
-            respBody.resize(bodyLen);
-            char *ptr = respBody.data();
+            QByteArray resBody;
+            resBody.resize(bodyLen);
+            char *ptr = resBody.data();
 
             memcpy(ptr, &groupId, sizeof(int));
             ptr += sizeof(int);
@@ -461,11 +442,11 @@ void ClientSocket::onReadyRead()
                 ptr += sizeof(GroupMemberInfo);
             }
 
-            this->write(makePacket(MSG_GROUP_MEMBER_LIST_RESP, respBody));
+            this->write(makePacket(MSG_GROUP_MEMBER_LIST_RESP, resBody));
             break;
         }
         case MSG_INVITE_TO_GROUP_REQ: {
-            // 邀请用户加入群(不用通过好友同意直接在群)
+            if (bodyData.size() < (int)sizeof(InviteToGroupReq)) break;
             InviteToGroupReq *req = (InviteToGroupReq*)bodyData.data();
             int groupId = req->groupId;
             int targetUserId = req->targetUserId;
@@ -473,14 +454,12 @@ void ClientSocket::onReadyRead()
             bool success = DBManager::instance().addGroupMember(groupId, targetUserId, 0);
 
             if (success) {
-                // 通知被邀请的用户
                 ClientSocket* targetSocket = TcpServer::instance().getUserSocket(targetUserId);
                 if (targetSocket) {
                     InviteToGroupNotify notify;
                     notify.groupId = groupId;
                     notify.inviterId = this->m_uid;
 
-                    // 获取群名
                     QList<GroupInfo> groups = DBManager::instance().getGroupList(targetUserId);
                     for (const auto& g : groups) {
                         if (g.groupId == groupId) {
@@ -493,43 +472,33 @@ void ClientSocket::onReadyRead()
                     targetSocket->write(makePacket(MSG_INVITE_TO_GROUP_NOTIFY,
                                                    QByteArray((char*)&notify, sizeof(InviteToGroupNotify)), 0, targetUserId));
                 }
-            }else{
-                // TODO 离线群邀请通知
             }
             break;
         }
         case MSG_LEAVE_GROUP_REQ: {
-            // 退出群聊
+            if (bodyData.size() < (int)sizeof(LeaveGroupReq)) break;
             LeaveGroupReq *req = (LeaveGroupReq*)bodyData.data();
             bool success = DBManager::instance().removeGroupMember(req->groupId, this->m_uid);
             
-            // 构造响应
             LeaveGroupResp resp;
             resp.result = success ? 1 : 0;
             resp.groupId = req->groupId;
             
-            // 发送响应给请求者
             this->write(makePacket(MSG_LEAVE_GROUP_RESP, QByteArray((char*)&resp, sizeof(LeaveGroupResp))));
             break;
         }
         case MSG_GROUP_CHAT_TEXT: {
-            // 群聊消息
             if (bodyData.size() < (int)sizeof(GroupChatMessage)) break;
 
             GroupChatMessage *msgHeader = (GroupChatMessage*)bodyData.data();
             int groupId = msgHeader->groupId;
 
-            // 获取消息内容（去掉GroupChatMessage头部）
-            // 注意：msgContent 是加密的密文，服务器不解密，只转发
             QByteArray msgContent = bodyData.mid(sizeof(GroupChatMessage));
 
-            // 保存到群聊消息表（存储的是加密数据）
             DBManager::instance().saveGroupMessage(groupId, this->m_uid, msgContent);
 
-            // 获取群成员列表
             QList<int> memberIds = DBManager::instance().getGroupMemberIds(groupId);
 
-            // 构建转发消息体（包含发送者信息）
             GroupChatMessage forwardHeader;
             forwardHeader.groupId = groupId;
             forwardHeader.senderId = this->m_uid;
@@ -540,30 +509,26 @@ void ClientSocket::onReadyRead()
             forwardBody.append((char*)&forwardHeader, sizeof(GroupChatMessage));
             forwardBody.append(msgContent);
 
-            // 遍历群成员转发消息
             for (int memberId : memberIds) {
-                if (memberId == this->m_uid) continue; // 不发给自己
+                if (memberId == this->m_uid) continue;
 
                 ClientSocket* memberSocket = TcpServer::instance().getUserSocket(memberId);
                 if (memberSocket) {
-                    // 在线：直接转发加密消息（服务器不解密）
                     memberSocket->write(makePacket(MSG_GROUP_CHAT_TEXT, forwardBody, this->m_uid, memberId));
                 } else {
-                    // 离线：保存加密的离线消息
                     DBManager::instance().saveGroupOfflineMessage(groupId, this->m_uid, memberId, msgContent);
                 }
             }
             break;
         }
         case MSG_GROUP_CHAT_HISTORY_REQ: {
-            // 群聊历史消息请求
             if (bodyData.size() < 4) break;
             int groupId = *(int*)bodyData.constData();
 
             auto history = DBManager::instance().getGroupChatHistory(groupId, 200);
 
-            QByteArray resp;
-            QDataStream out(&resp, QIODevice::WriteOnly);
+            QByteArray res;
+            QDataStream out(&res, QIODevice::WriteOnly);
             out.setByteOrder(QDataStream::LittleEndian);
 
             out << quint32(groupId);
@@ -576,7 +541,7 @@ void ClientSocket::onReadyRead()
                 quint64 timestamp = std::get<3>(item);
 
                 out << quint32(senderId);
-                out << quint64(timestamp);  // 添加时间戳
+                out << quint64(timestamp);
                 QByteArray nameBytes = senderName.toUtf8();
                 out << quint32(nameBytes.size());
                 out.writeRawData(nameBytes.constData(), nameBytes.size());
@@ -584,17 +549,13 @@ void ClientSocket::onReadyRead()
                 out.writeRawData(content.constData(), content.size());
             }
 
-            this->write(makePacket(MSG_GROUP_CHAT_HISTORY_RESP, resp, groupId, this->m_uid));
+            this->write(makePacket(MSG_GROUP_CHAT_HISTORY_RESP, res, groupId, this->m_uid));
             break;
         }
         default:
             break;
         }
-
-        // 从缓冲区移除已处理的这个包
-        m_buffer = m_buffer.right(m_buffer.size() - totalLen);
     }
-
 }
 
 void ClientSocket::writePacket(ClientSocket *target, int type, const QByteArray &body, int src, int dest)
@@ -612,20 +573,16 @@ void ClientSocket::writePacket(ClientSocket *target, int type, const QByteArray 
 
 void ClientSocket::notifyFriends(int status)
 {
-    // 1. 查库：我有那些好友？
     QList<int> friendIds = DBManager::instance().getFriendIds(this->m_uid);
 
-    // 2. 遍历：看这些好友谁在线
     for (int friendId : friendIds) {
         ClientSocket* friendSocket = TcpServer::instance().getUserSocket(friendId);
 
-        // 3. 如果好友在线，就发包通知他
         if (friendSocket) {
             FriendStatusChange notify;
-            notify.uid = this->m_uid; // 我变了
-            notify.status = status;   // 变成啥了
+            notify.uid = this->m_uid;
+            notify.status = status;
 
-            // 注意：这里 src_id 填 0 或 server_id 都可以，因为关键数据在 struct 里
             QByteArray data((char*)&notify, sizeof(FriendStatusChange));
             writePacket(friendSocket, MSG_FRIEND_STATUS_NOTIFY, data, 0, friendId);
         }
@@ -665,7 +622,6 @@ void ClientSocket::pushGroupOfflineMsgs(const QList<std::tuple<int, int, QString
         QString senderName = std::get<2>(msg);
         QByteArray content = std::get<3>(msg);
 
-        // 构建群聊消息体
         GroupChatMessage header;
         header.groupId = groupId;
         header.senderId = senderId;

@@ -1,4 +1,4 @@
-#ifndef FILERECEIVER_H
+﻿#ifndef FILERECEIVER_H
 #define FILERECEIVER_H
 
 #include <QFile>
@@ -13,8 +13,8 @@
 struct ReceivingFileInfo {
     QString fileId;
     QString fileName;
-    QString savePath;           // 最终保存路径
-    QString tempPath;           // 临时文件路径
+    QString savePath;                   // 最终保存路径
+    QString tempPath;                   // 临时文件路径
     qint64 totalSize = 0;
     qint64 receivedSize = 0;
     int totalChunks = 0;
@@ -65,8 +65,8 @@ private:
     ~FileReceiver();
 
     QMap<QString, ReceivingFileInfo*> m_receivingFiles;
-    QMutex m_mutex;     // 保护并发访问
-    int m_currentUserId = 0;  // 当前用户ID（用于解密）
+    QMutex m_mutex;             // 保护并发访问
+    int m_currentUserId = 0;    // 当前用户ID（用于解密）
 signals:
 
     // 接收进度信号

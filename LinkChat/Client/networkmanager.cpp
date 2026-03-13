@@ -1,20 +1,15 @@
-#include "networkmanager.h"
+﻿#include "networkmanager.h"
 #include "logger.h"
 
 #include <QDataStream>
 #include <cstring>
+#include <exception>
 
-// Windows兼容的strnlen实现
-// 提供安全的字符串长度计算函数，避免依赖可能不存在的strnlen
 namespace {
-    // 安全地获取字符串长度，最多检查maxlen个字符
     inline size_t safe_strnlen(const char* s, size_t maxlen) {
         if (!s) return 0;
-        size_t len = 0;
-        while (len < maxlen && s[len] != '\0') {
-            len++;
-        }
-        return len;
+        const char* end = (const char*)std::memchr(s, '\0', maxlen);
+        return end ? (size_t)(end - s) : maxlen;
     }
 }
 
@@ -32,15 +27,12 @@ NetworkManager::NetworkManager(QObject *parent)
     m_heartbeatManager = new HeartbeatManager(this);
     m_reconnectManager = new ReconnectManager(this);
 
-    // 连接socket信号
     connect(m_socket,&QTcpSocket::connected,this,&NetworkManager::onConnected);
     connect(m_socket,&QTcpSocket::disconnected,this,&NetworkManager::onDisconnected);
     connect(m_socket, &QTcpSocket::errorOccurred, this,&NetworkManager::onError);
 
-    // 关联接收数据信号
     connect(m_socket,&QTcpSocket::readyRead,this,&NetworkManager::onReadyRead);
 
-    // 连接心跳管理器信号
     connect(m_heartbeatManager,&HeartbeatManager::needSendHeartbeat,this,&NetworkManager::sendHeartbeat);
     connect(m_heartbeatManager,&HeartbeatManager::heartbeatTimeout,
             this,[this](int missedCount){
@@ -48,7 +40,6 @@ NetworkManager::NetworkManager(QObject *parent)
                 m_socket->abort();
             });
 
-    // 连接重连管理器信号
     connect(m_reconnectManager,&ReconnectManager::needReconnect,
             this,[this](const QString &ip,uint16_t port){
                 m_socket->abort();
@@ -60,10 +51,8 @@ NetworkManager::NetworkManager(QObject *parent)
 
 void NetworkManager::connectToServer(const QString &ip, uint16_t port)
 {
-    // 保存服务器信息到重连管理器中
     m_reconnectManager->setServerInfo(ip,port);
 
-    // 设置状态为连接中
     m_reconnectManager->setConnectionState(ReconnectManager::Connecting);
 
     m_socket->abort();
@@ -72,17 +61,13 @@ void NetworkManager::connectToServer(const QString &ip, uint16_t port)
 
 void NetworkManager::disconnectFromServer()
 {
-    // 停止心跳
     m_heartbeatManager->stop();
 
-    // 禁用自动重连
     m_reconnectManager->setAutoConnect(false);
     m_reconnectManager->stopReconnect();
 
-    // 清除登录信息
     m_reconnectManager->clearLoginInfo();
 
-    // 清除密钥缓存（安全措施）
     EncryptionManager::instance().clearKeyCache();
 
     m_socket->disconnectFromHost();
@@ -96,7 +81,11 @@ bool NetworkManager::isConnected() const
 void NetworkManager::sendMsg(uint32_t type, const QByteArray &body)
 {
     QByteArray data = makePacket(type,body);
-    m_socket->write(data);
+    if(m_socket->state() == QAbstractSocket::ConnectedState){
+        m_socket->write(data);
+    }else{
+        LOG_WARN("Socket is not connected, cannot send message");
+    }
 }
 
 void NetworkManager::sendRow(const QByteArray &packet)
@@ -105,11 +94,10 @@ void NetworkManager::sendRow(const QByteArray &packet)
         return;
     }
 
-    // 处于连接状态才发送
     if(m_socket->state() == QAbstractSocket::ConnectedState){
         m_socket->write(packet);
     }else{
-        LOG_WARN("Socket 未连接，无法发送数据");
+        LOG_WARN("Socket is not connected, cannot send packet");
     }
 }
 
@@ -117,7 +105,7 @@ void NetworkManager::requestResumeTransfer(const QString &fileId, int friendId)
 {
     FileResumeReq req;
     memset(&req, 0, sizeof(req));
-    strncpy(req.fileId, fileId.toUtf8().constData(), 63);
+    strncpy(req.fileId, fileId.toLatin1().constData(), 63);
 
     QByteArray body((char*)&req, sizeof(req));
     QByteArray packet = makePacket(MSG_FILE_RESUME_REQ, body, 0, friendId);
@@ -128,7 +116,7 @@ void NetworkManager::requestFileVerify(const QString &fileId, const QString &fil
 {
     FileVerifyReq req;
     memset(&req, 0, sizeof(req));
-    strncpy(req.fileId, fileId.toUtf8().constData(), 63);
+    strncpy(req.fileId, fileId.toLatin1().constData(), 63);
     strncpy(req.fileMD5, fileMD5.toUtf8().constData(), 32);
 
     QByteArray body((char*)&req, sizeof(req));
@@ -145,30 +133,25 @@ void NetworkManager::sendHeartbeat()
     HeartbeatPacket hb;
     hb.timestamp = QDateTime::currentMSecsSinceEpoch();
 
-    // 发送心跳包
     sendMsg(MSG_HEARTBEAT_REQ,QByteArray((char*)&hb,sizeof(HeartbeatPacket)));
 }
 
-void NetworkManager::handleAutoLogin(const QString &userName, const QString &password)
+void NetworkManager::handleAutoLogin(const QString &userName, const QString &passwordHashBase64)
 {
     LoginReq req;
     memset(&req,0,sizeof(LoginReq));
     strncpy(req.userName,userName.toUtf8().constData(),31);
-    strncpy(req.password,password.toUtf8().constData(),31);
-
-    // 发送登录请求
+    strncpy(req.passwordHash,passwordHashBase64.toUtf8().constData(),63);
     sendMsg(MSG_LOGIN_REQ,QByteArray((char*)&req,sizeof(LoginReq)));
+
 }
 
 void NetworkManager::onConnected()
 {
-    // 清空缓冲区
     m_buffer.clear();
 
-    // 跟新重连管理器连接状态(已连接)
     m_reconnectManager->setConnectionState(ReconnectManager::Connected);
 
-    // 启动心跳
     m_heartbeatManager->start();
 
     emit sigConnectionStateChanged(true);
@@ -176,19 +159,17 @@ void NetworkManager::onConnected()
 
 void NetworkManager::onDisconnected()
 {
-    // 停止心跳
     m_heartbeatManager->stop();
 
     m_reconnectManager->setConnectionState(ReconnectManager::Disconnected);
 
-    // 发出连接状态改变信号
     emit sigConnectionStateChanged(false);
 }
 
 void NetworkManager::onError(QAbstractSocket::SocketError error)
 {
     Q_UNUSED(error);
-    LOG_ERROR(QString("NetworkManager: 网络错误: %1").arg(m_socket->errorString()));
+    LOG_ERROR(QString("NetworkManager socket error: %1").arg(m_socket->errorString()));
     m_reconnectManager->setConnectionState(ReconnectManager::Disconnected);
     
 }
@@ -197,189 +178,227 @@ void NetworkManager::onReadyRead()
 {
     m_buffer.append(m_socket->readAll());
 
-    while(m_buffer.size() >= (int)sizeof(PDUHeader)){
-        PDUHeader *header = (PDUHeader*)m_buffer.data();
-        uint32_t totalLen = header->total_len;
-
-        if(m_buffer.size() < (int)totalLen){
-            break;
-        }
-
-        // 读取信息主体部分
-        QByteArray body = m_buffer.mid(sizeof(PDUHeader),totalLen - sizeof(PDUHeader));
-        uint32_t type = header->msg_type;
-
-        switch (type) {
-        case MSG_HEARTBEAT_RESP:{
-            // 收到心跳响应
-            m_heartbeatManager->onHeartbeatReceived();
-            break;
-        }
-        case MSG_REGISTER_RESP:{
-            LoginResp *resp = (LoginResp*)body.data();
-            emit sigRegisterResult(resp->result == 1);
-            break;
-        }
-        case MSG_LOGIN_RESP:{
-            LoginResp *resp = (LoginResp*)body.data();
-            int result = resp->result;
-            bool ok = (result == 1);
-            int uid = resp->userId;
-
-            int errorCode = 0;
-            if(result == 2){
-                errorCode = 2;      // 已在其他设备登录
-            }else if(result == 0){
-                errorCode = 1;      // 用户名或密码错误
+    while (m_buffer.size() >= (int)sizeof(PDUHeader)) {
+        while (m_buffer.size() >= (int)sizeof(uint32_t)) {
+            uint32_t magic = 0;
+            memcpy(&magic, m_buffer.data(), sizeof(uint32_t));
+            if (magic == PDU_MAGIC) break;
+            
+            int nextIdx = -1;
+            for (int i = 1; i <= m_buffer.size() - (int)sizeof(uint32_t); ++i) {
+                uint32_t m = 0;
+                memcpy(&m, m_buffer.constData() + i, sizeof(uint32_t));
+                if (m == PDU_MAGIC) {
+                    nextIdx = i;
+                    break;
+                }
             }
-
-            emit sigLoginResult(ok,uid,errorCode);
-            break;
-        }
-        case MSG_FRIEND_LIST_RESP:{
-            // 解析好友列表包
-            char *ptr = body.data();
-            int count = 0;
-            // 获取好友数量
-            memcpy(&count,ptr,sizeof(int));
-            ptr += sizeof(int);
-
-            // 获取每一个好友包
-            QList<FriendInfo> list;
-            for (int i = 0; i < count; ++i) {
-                FriendInfo info;
-                memcpy(&info,ptr,sizeof(FriendInfo));
-                list.append(info);
-                ptr += sizeof(FriendInfo);
+            
+            if (nextIdx > 0) {
+                LOG_WARN(QString("Packet resync: skipping %1 bytes to next magic").arg(nextIdx));
+                m_buffer.remove(0, nextIdx);
+            } else {
+                LOG_WARN("Packet resync: magic not found, dropping buffer except last 3 bytes");
+                int keep = qMin(3, m_buffer.size());
+                m_buffer.remove(0, m_buffer.size() - keep);
             }
-            emit sigFriendListReceived(list);
-            break;
         }
-        case MSG_CHAT_TEXT:{
-            // 解密私聊消息
-            if (body.isEmpty() || body.size() < 1) {
-                LOG_WARN("[NetworkManager] Received empty chat message");
+
+        if (m_buffer.size() < (int)sizeof(PDUHeader)) break;
+
+        PDUHeader header;
+        memcpy(&header, m_buffer.data(), sizeof(PDUHeader));
+        uint32_t totalLen = header.total_len;
+
+        const uint32_t MAX_PACKET_LEN = 50u * 1024u * 1024u;
+        if (totalLen < sizeof(PDUHeader) || totalLen > MAX_PACKET_LEN) {
+            LOG_ERROR_FMT("Invalid packet length: %1, skipping magic and resyncing", totalLen);
+            m_buffer.remove(0, sizeof(uint32_t));
+            continue;
+        }
+
+        if (m_buffer.size() < (int)totalLen) break;
+
+        QByteArray body    = m_buffer.mid(sizeof(PDUHeader), totalLen - sizeof(PDUHeader));
+        uint32_t msgType   = header.msg_type;
+        uint32_t srcId     = header.src_id;
+
+        if (msgType != MSG_FILE_CHUNK) {
+            LOG_DEBUG(QString("Received packet: type=%1, len=%2").arg(msgType).arg(totalLen));
+        }
+
+        m_buffer.remove(0, totalLen);
+
+        try {
+            switch (msgType) {
+            case MSG_HEARTBEAT_RESP:{
+                m_heartbeatManager->onHeartbeatReceived();
                 break;
             }
-            
-            // 第一个字节是子类型（可能带有加密标记）
-            char subType = body[0];
-            QByteArray content = body.mid(1);
-            
-            // 检查是否带有加密标记
-            if (isSubTypeEncrypted(subType)) {
-                // 消息已加密，需要解密
-                char originalSubType = getOriginalSubType(subType);
-                
-                // 获取聊天密钥
-                QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, header->src_id);
-                
-                if (key.isEmpty()) {
-                    LOG_ERROR_FMT("[NetworkManager] Failed to get chat key for user %1", header->src_id);
-                    // 发送解密失败的消息体
-                    QByteArray failedBody;
-                    failedBody.append(originalSubType);
-                    emit sigMsgReceived(header->src_id, failedBody);
-                    break;
-                }
-                
-                // 对消息内容进行XOR解密
-                QByteArray decrypted = EncryptionManager::instance().xorEncryptDecrypt(content, key);
-                
-                // 检查解密是否失败
-                if (decrypted.isEmpty() && !content.isEmpty()) {
-                    LOG_ERROR_FMT("[NetworkManager] Failed to decrypt message from user %1", header->src_id);
-                    QByteArray failedBody;
-                    failedBody.append(originalSubType);
-                    emit sigMsgReceived(header->src_id, failedBody);
-                    break;
-                }
-                
-                // 重新组装消息体：原始子类型 + 解密后的内容
-                QByteArray decryptedBody;
-                decryptedBody.append(originalSubType);
-                decryptedBody.append(decrypted);
-                
-                emit sigMsgReceived(header->src_id, decryptedBody);
-            } else {
-                // 消息未加密，直接使用
-                emit sigMsgReceived(header->src_id, body);
+            case MSG_REGISTER_RESP:{
+                if (body.size() < (int)sizeof(LoginResp)) break;
+                LoginResp *resp = (LoginResp*)body.data();
+                emit sigRegisterResult(resp->result == 1);
+                break;
             }
-            break;
-        }
-        case MSG_CHAT_HISTORY_RESP:{
-            QDataStream in(body);
-            in.setByteOrder(QDataStream::LittleEndian);
+            case MSG_LOGIN_SALT_RESP:{
+                if (body.size() < (int)sizeof(LoginSaltResp)) break;
+                LoginSaltResp *resp = (LoginSaltResp*)body.data();
+                const bool ok = (resp->result == 1);
+                QByteArray saltBase64;
+                if (ok) {
+                    saltBase64 = QByteArray(resp->salt, (int)safe_strnlen(resp->salt, sizeof(resp->salt)));
+                }
+                emit sigLoginSaltReceived(ok, saltBase64);
+                break;
+            }
+            case MSG_LOGIN_RESP:{
+                if (body.size() < (int)sizeof(LoginResp)) break;
+                LoginResp *resp = (LoginResp*)body.data();
+                int result = resp->result;
+                bool ok = (result == 1);
+                int uid = resp->userId;
 
-            quint32 count;
-            in >> count;
+                int errorCode = 0;
+                if(result == 2){
+                    errorCode = 2;
+                }else if(result == 0){
+                    errorCode = 1;
+                }
 
-            QList<std::tuple<int, QByteArray, quint64>> history;
-            for (quint32 i = 0; i < count; ++i) {
-                quint32 senderId;
-                quint64 timestamp;
-                quint32 len;
-                in >> senderId >> timestamp >> len;
-                QByteArray content = body.mid(in.device()->pos(), len);
-                in.device()->seek(in.device()->pos() + len);
+                emit sigLoginResult(ok,uid,errorCode);
+                break;
+            }
+            case MSG_FRIEND_LIST_RESP:{
+                if (body.size() < (int)sizeof(int)) break;
+                char *ptr = body.data();
+                int count = 0;
+                memcpy(&count,ptr,sizeof(int));
+                ptr += sizeof(int);
+
+                if (body.size() < (int)(sizeof(int) + count * sizeof(FriendInfo))) break;
+
+                QList<FriendInfo> list;
+                for (int i = 0; i < count; ++i) {
+                    FriendInfo info;
+                    memcpy(&info,ptr,sizeof(FriendInfo));
+                    list.append(info);
+                    ptr += sizeof(FriendInfo);
+                }
+                emit sigFriendListReceived(list);
+                break;
+            }
+            case MSG_CHAT_TEXT:{
+                if (body.isEmpty() || body.size() < 1) {
+                    LOG_WARN("Received empty chat message");
+                    break;
+                }
                 
-                // 解密私聊历史消息
-                QByteArray decryptedContent;
-                if (!content.isEmpty() && content.size() >= 1) {
-                    // 第一个字节是子类型（可能带有加密标记）
-                    char subType = content[0];
-                    QByteArray messageBody = content.mid(1);
+                char subType = body[0];
+                QByteArray content = body.mid(1);
+                
+                if (isSubTypeEncrypted(subType)) {
+                    char originalSubType = getOriginalSubType(subType);
                     
-                    // 检查是否带有加密标记
-                    if (isSubTypeEncrypted(subType)) {
-                        // 消息已加密，需要解密
-                        char originalSubType = getOriginalSubType(subType);
+                    QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, srcId);
+                    
+                    if (key.isEmpty()) {
+                        LOG_ERROR_FMT("Failed to get chat key for user %1", srcId);
+                        QByteArray failedBody;
+                        failedBody.append(originalSubType);
+                        emit sigMsgReceived(srcId, failedBody);
+                        break;
+                    }
+                    
+                    QByteArray decrypted = EncryptionManager::instance().xorEncryptDecrypt(content, key);
+                    
+                    if (decrypted.isEmpty() && !content.isEmpty()) {
+                        LOG_ERROR_FMT("Failed to decrypt message from user %1", srcId);
+                        QByteArray failedBody;
+                        failedBody.append(originalSubType);
+                        emit sigMsgReceived(srcId, failedBody);
+                        break;
+                    }
+                    
+                    QByteArray decryptedBody;
+                    decryptedBody.append(originalSubType);
+                    decryptedBody.append(decrypted);
+                    
+                    emit sigMsgReceived(srcId, decryptedBody);
+                } else {
+                    emit sigMsgReceived(srcId, body);
+                }
+                break;
+            }
+            case MSG_CHAT_HISTORY_RESP:{
+                QDataStream in(body);
+                in.setByteOrder(QDataStream::LittleEndian);
+
+                quint32 count;
+                in >> count;
+
+                QList<std::tuple<int, QByteArray, quint64>> history;
+                for (quint32 i = 0; i < count; ++i) {
+                    quint32 senderId;
+                    quint64 timestamp;
+                    quint32 len;
+                    if (in.atEnd()) break;
+                    in >> senderId >> timestamp >> len;
+                    if (body.size() < (int)(in.device()->pos() + len)) break;
+                    QByteArray content = body.mid(in.device()->pos(), len);
+                    in.device()->seek(in.device()->pos() + len);
+                    
+                    QByteArray decryptedContent;
+                    if (!content.isEmpty() && content.size() >= 1) {
+                        char subType = content[0];
+                        QByteArray messageBody = content.mid(1);
                         
-                        // 获取私聊密钥
-                        QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, header->src_id);
-                        
-                        if (key.isEmpty()) {
-                            LOG_ERROR_FMT("[NetworkManager] Failed to get chat key for history with user %1", header->src_id);
-                            // 解密失败，返回原始子类型
-                            decryptedContent.append(originalSubType);
-                        } else {
-                            // 对内容进行XOR解密
-                            QByteArray decrypted = EncryptionManager::instance().xorEncryptDecrypt(messageBody, key);
+                        if (isSubTypeEncrypted(subType)) {
+                            char originalSubType = getOriginalSubType(subType);
                             
-                            if (decrypted.isEmpty() && !messageBody.isEmpty()) {
-                                LOG_ERROR_FMT("[NetworkManager] Failed to decrypt chat history message from user %1", senderId);
+                            QByteArray key = EncryptionManager::instance().getCachedChatKey(m_currentUserId, srcId);
+                            
+                            if (key.isEmpty()) {
+                                LOG_ERROR_FMT("Failed to get chat key for history with user %1", srcId);
                                 decryptedContent.append(originalSubType);
                             } else {
-                                // 重新组装：原始子类型 + 解密后的内容
-                                decryptedContent.append(originalSubType);
-                                decryptedContent.append(decrypted);
+                                QByteArray decrypted = EncryptionManager::instance().xorEncryptDecrypt(messageBody, key);
+                                
+                                if (decrypted.isEmpty() && !messageBody.isEmpty()) {
+                                    LOG_ERROR_FMT("Failed to decrypt chat history message from user %1", senderId);
+                                    decryptedContent.append(originalSubType);
+                                } else {
+                                    decryptedContent.append(originalSubType);
+                                    decryptedContent.append(decrypted);
+                                }
                             }
+                        } else {
+                            decryptedContent = content;
                         }
                     } else {
-                        // 消息未加密，直接使用
                         decryptedContent = content;
                     }
-                } else {
-                    // 消息为空或格式不正确，直接使用原始内容
-                    decryptedContent = content;
-                }
                 
                 history.append(std::make_tuple((int)senderId, decryptedContent, timestamp));
             }
-            emit sigChatHistoryReceived(header->src_id, history);
+            emit sigChatHistoryReceived(srcId, history);
             break;
         }
         case MSG_FRIEND_STATUS_NOTIFY:{
+            if (body.size() < (int)sizeof(FriendStatusChange)) break;
             FriendStatusChange* notify = (FriendStatusChange*)body.data();
             emit sigFriendStatusChanged(notify->uid, notify->status);
             break;
         }
         case MSG_SEARCH_USER_RESP:{
+            if (body.size() < (int)sizeof(int)) break;
             char *ptr = body.data();
             int count = 0;
 
             memcpy(&count,ptr,sizeof(int));
             ptr += sizeof(int);
+
+            if (body.size() < (int)(sizeof(int) + count * sizeof(FriendInfo))) break;
 
             QList<FriendInfo> list;
             for (int i = 0; i < count; ++i) {
@@ -393,14 +412,17 @@ void NetworkManager::onReadyRead()
             break;
         }
         case MSG_ADD_FRIEND_NOTIFY:{
+            if (body.size() < (int)sizeof(AddFriendNotify)) break;
             AddFriendNotify *notify = (AddFriendNotify*)body.data();
-            qDebug() << "[NetworkManager] Received friend request from" << notify->requesterId << "(" << QString::fromUtf8(notify->requesterName) << ")";
-            emit sigFriendRequestReceived(notify->requesterId,QString::fromUtf8(notify->requesterName));
+            LOG_DEBUG(QString("Received friend request from %1 (%2)")
+                     .arg(notify->requesterId)
+                     .arg(QString::fromUtf8(notify->requesterName, safe_strnlen(notify->requesterName, 32))));
+            emit sigFriendRequestReceived(notify->requesterId,QString::fromUtf8(notify->requesterName, safe_strnlen(notify->requesterName, 32)));
             break;
         }
         case MSG_ADD_FRIEND_RESULT:{
+            if (body.size() < (int)sizeof(AddFriendResp)) break;
             AddFriendResp *resp = (AddFriendResp*)body.data();
-            // int friendId = resp->requesterId;
             bool accepted = resp->accepted;
 
             if(accepted){
@@ -411,17 +433,22 @@ void NetworkManager::onReadyRead()
             break;
         }
         case MSG_DELETE_FRIEND_RESP:{
+            if (body.size() < (int)sizeof(DeleteFriendResp)) break;
             DeleteFriendResp *resp = (DeleteFriendResp*)body.data();
             emit sigDeleteFriendResponse(resp->result, resp->targetId);
             break;
         }
         case MSG_FILE_TRANSFER_REQ:{
-            FileTransferReq *req = (FileTransferReq*)body.data();
+            if (body.size() < (int)sizeof(FileTransferReq)) break;
+            
+            FileTransferReq req;
+            memcpy(&req, body.data(), sizeof(FileTransferReq));
+            
             emit sigFileTransferRequest(
-                QString::fromLatin1(req->fileId, strnlen(req->fileId, sizeof(req->fileId))),
-                QString::fromUtf8(req->fileName),
-                req->fileSize,
-                header->src_id
+                QString::fromLatin1(req.fileId, safe_strnlen(req.fileId, sizeof(req.fileId))),
+                QString::fromUtf8(req.fileName, safe_strnlen(req.fileName, sizeof(req.fileName))),
+                req.fileSize,
+                srcId
                 );
             break;
         }
@@ -430,66 +457,104 @@ void NetworkManager::onReadyRead()
                 break;
             }
 
-            FileTransferResp *resp = (FileTransferResp*)body.data();
-            QString fileId = QString::fromLatin1(resp->fileId, strnlen(resp->fileId, sizeof(resp->fileId)));
-            bool accepted = (resp->accepted == 1);
+            FileTransferResp resp;
+            memcpy(&resp, body.data(), sizeof(FileTransferResp));
+            
+            QString fileId = QString::fromLatin1(resp.fileId, safe_strnlen(resp.fileId, sizeof(resp.fileId)));
+            bool accepted = (resp.accepted == 1);
 
             emit sigFileTransferResponse(fileId,accepted);
             break;
         }
         case MSG_FILE_CHUNK:{
-            // 解析文件分片
             if (body.size() < (int)sizeof(FileChunk)) {
-                LOG_WARN("Received file chunk with insufficient size");
+                LOG_WARN(QString("Received file chunk with insufficient size: body=%1, expected=%2")
+                            .arg(body.size()).arg((int)sizeof(FileChunk)));
+                break;
+            }
+            
+            FileChunk chunk;
+            memset(&chunk, 0, sizeof(FileChunk));
+            memcpy(&chunk, body.data(), sizeof(FileChunk));
+            
+            QString fileId = QString::fromLatin1(chunk.fileId, safe_strnlen(chunk.fileId, sizeof(chunk.fileId)));
+            int chunkIndex = static_cast<int>(chunk.chunkIndex);
+            int chunkSize = static_cast<int>(chunk.chunkSize);
+            
+            int declaredChunkSize = (int)chunk.chunkSize;
+            int actualDataSize = body.size() - (int)sizeof(FileChunk);
+
+            if (chunkIndex % 50 == 0) {
+                LOG_DEBUG(QString("Processing chunk for file %1, index %2, declared size %3, actual data %4")
+                         .arg(fileId).arg(chunkIndex).arg(declaredChunkSize).arg(actualDataSize));
+            }
+
+            if (actualDataSize < 0) {
+                LOG_ERROR(QString("Body size %1 smaller than FileChunk header %2")
+                         .arg(body.size()).arg((int)sizeof(FileChunk)));
                 break;
             }
 
-            FileChunk *chunk = (FileChunk*)body.data();
-            QString fileId = QString::fromLatin1(chunk->fileId, safe_strnlen(chunk->fileId, sizeof(chunk->fileId)));
-            int chunkIndex = chunk->chunkIndex;
-            int chunkSize = chunk->chunkSize;
-
-            // 验证分片大小的合理性（最大1MB，最小0字节）
-            if (chunkSize > 1024 * 1024 || chunkSize < 0) {
-                LOG_ERROR(QString("Invalid chunk size: %1").arg(chunkSize));
+            if (declaredChunkSize < 0 || declaredChunkSize > 1024 * 1024) {
+                LOG_ERROR(QString("Invalid declared chunk size: %1").arg(declaredChunkSize));
                 break;
             }
 
-            // 验证分片索引的合理性（最大100万个分片，对应约64GB文件）
             if (chunkIndex < 0 || chunkIndex > 1000000) {
                 LOG_ERROR(QString("Invalid chunk index: %1").arg(chunkIndex));
                 break;
             }
 
-            // 验证body大小是否足够包含声明的数据
-            if (body.size() < (int)(sizeof(FileChunk) + chunkSize)) {
-                LOG_ERROR(QString("Body size %1 insufficient for chunk size %2").arg(body.size()).arg(chunkSize));
+            int readSize = qMin(declaredChunkSize, actualDataSize);
+            if (readSize <= 0 && declaredChunkSize > 0) {
+                LOG_ERROR(QString("No data available for chunk %1").arg(chunkIndex));
                 break;
             }
 
-            // 实际的文件数据
-            QByteArray chunkData = body.mid(sizeof(FileChunk), chunkSize);
-
-            // 验证实际读取的数据大小
-            if(chunkData.size() != chunkSize){
-                LOG_ERROR(QString("Chunk data size mismatch: expected %1, got %2").arg(chunkSize).arg(chunkData.size()));
+            QByteArray chunkData;
+            try {
+                chunkData = body.mid(sizeof(FileChunk), readSize);
+            } catch (const std::exception& e) {
+                LOG_ERROR(QString("Exception extracting chunk data: %1").arg(e.what()));
+                break;
+            } catch (...) {
+                LOG_ERROR("Unknown exception extracting chunk data");
                 break;
             }
 
-            // 发送接收分片数据信号
-            emit receiveChunk(fileId,chunkIndex,chunkData);
+            if (chunkData.isEmpty() && readSize > 0) {
+                LOG_ERROR(QString("Failed to extract chunk data for chunk %1").arg(chunkIndex));
+                break;
+            }
+
+            if (chunkIndex % 50 == 0) {
+                LOG_DEBUG(QString("Chunk %1 extracted: %2 bytes")
+                         .arg(chunkIndex).arg(chunkData.size()));
+            }
+
+            try {
+                emit receiveChunk(fileId, chunkIndex, chunkData);
+            } catch (const std::exception& e) {
+                LOG_ERROR(QString("Exception emitting receiveChunk: %1").arg(e.what()));
+            } catch (...) {
+                LOG_ERROR("Unknown exception emitting receiveChunk");
+            }
             break;
         }
         case MSG_CREATE_GROUP_RESP: {
+            if (body.size() < (int)sizeof(CreateGroupResp)) break;
             CreateGroupResp *resp = (CreateGroupResp*)body.data();
             emit sigCreateGroupResult(resp->result == 1, resp->groupId);
             break;
         }
         case MSG_GROUP_LIST_RESP: {
+            if (body.size() < (int)sizeof(int)) break;
             char *ptr = body.data();
             int count = 0;
             memcpy(&count, ptr, sizeof(int));
             ptr += sizeof(int);
+
+            if (body.size() < (int)(sizeof(int) + count * sizeof(GroupInfo))) break;
 
             QList<GroupInfo> list;
             for (int i = 0; i < count; ++i) {
@@ -502,6 +567,7 @@ void NetworkManager::onReadyRead()
             break;
         }
         case MSG_GROUP_MEMBER_LIST_RESP: {
+            if (body.size() < (int)sizeof(int) * 2) break;
             char *ptr = body.data();
             int groupId = 0;
             int count = 0;
@@ -509,6 +575,8 @@ void NetworkManager::onReadyRead()
             ptr += sizeof(int);
             memcpy(&count, ptr, sizeof(int));
             ptr += sizeof(int);
+
+            if (body.size() < (int)(sizeof(int) * 2 + count * sizeof(GroupMemberInfo))) break;
 
             QList<GroupMemberInfo> list;
             for (int i = 0; i < count; ++i) {
@@ -526,62 +594,52 @@ void NetworkManager::onReadyRead()
             GroupChatMessage *msg = (GroupChatMessage*)body.data();
             int groupId = msg->groupId;
             int senderId = msg->senderId;
-            QString senderName = QString::fromUtf8(msg->senderName);
+            QString senderName = QString::fromUtf8(msg->senderName, safe_strnlen(msg->senderName, 32));
             QByteArray content = body.mid(sizeof(GroupChatMessage));
             
-            // 解密群聊消息
             if (content.isEmpty() || content.size() < 1) {
-                LOG_WARN("[NetworkManager] Received empty group chat message");
+                LOG_WARN("Received empty group chat message");
                 break;
             }
             
-            // 第一个字节是子类型（可能带有加密标记）
             char subType = content[0];
             QByteArray messageBody = content.mid(1);
             
-            // 检查是否带有加密标记
             if (isSubTypeEncrypted(subType)) {
-                // 消息已加密，需要解密
                 char originalSubType = getOriginalSubType(subType);
                 
-                // 获取群聊密钥
                 QByteArray key = EncryptionManager::instance().getCachedGroupKey(groupId);
                 
                 if (key.isEmpty()) {
-                    LOG_ERROR_FMT("[NetworkManager] Failed to get group key for group %1", groupId);
-                    // 发送解密失败的消息体（保留原始子类型，内容为空）
+                    LOG_ERROR_FMT("Failed to get group key for group %1", groupId);
                     QByteArray failedBody;
                     failedBody.append(originalSubType);
                     emit sigGroupMsgReceived(groupId, senderId, senderName, failedBody);
                     break;
                 }
                 
-                // 对消息内容进行XOR解密
                 QByteArray decrypted = EncryptionManager::instance().xorEncryptDecrypt(messageBody, key);
                 
-                // 检查解密是否失败
                 if (decrypted.isEmpty() && !messageBody.isEmpty()) {
-                    LOG_ERROR_FMT("[NetworkManager] Failed to decrypt group message from group %1", groupId);
-                    // 解密失败
+                    LOG_ERROR_FMT("Failed to decrypt group message from group %1", groupId);
                     QByteArray failedBody;
                     failedBody.append(originalSubType);
                     emit sigGroupMsgReceived(groupId, senderId, senderName, failedBody);
                     break;
                 }
                 
-                // 重新组装消息体：原始子类型 + 解密后的内容
                 QByteArray decryptedContent;
                 decryptedContent.append(originalSubType);
                 decryptedContent.append(decrypted);
                 
                 emit sigGroupMsgReceived(groupId, senderId, senderName, decryptedContent);
             } else {
-                // 消息未加密，直接使用
                 emit sigGroupMsgReceived(groupId, senderId, senderName, content);
             }
             break;
         }
         case MSG_GROUP_CHAT_HISTORY_RESP: {
+            if (body.size() < (int)sizeof(quint32) * 2) break;
             QDataStream in(body);
             in.setByteOrder(QDataStream::LittleEndian);
 
@@ -590,53 +648,47 @@ void NetworkManager::onReadyRead()
 
             QList<std::tuple<int, QString, QByteArray, quint64>> history;
             for (quint32 i = 0; i < count; ++i) {
+                if (in.atEnd()) break;
                 quint32 senderId, nameLen, contentLen;
                 quint64 timestamp;
                 in >> senderId >> timestamp >> nameLen;
 
+                if (body.size() < (int)(in.device()->pos() + nameLen)) break;
                 QByteArray nameBytes(nameLen, '\0');
                 in.readRawData(nameBytes.data(), nameLen);
                 QString senderName = QString::fromUtf8(nameBytes);
 
+                if (in.atEnd()) break;
                 in >> contentLen;
+                if (body.size() < (int)(in.device()->pos() + contentLen)) break;
                 QByteArray content(contentLen, '\0');
                 in.readRawData(content.data(), contentLen);
                 
-                // 解密群聊历史消息
                 QByteArray decryptedContent;
                 if (!content.isEmpty() && content.size() >= 1) {
-                    // 第一个字节是子类型（可能带有加密标记）
                     char subType = content[0];
                     QByteArray messageBody = content.mid(1);
                     
-                    // 检查是否带有加密标记
                     if (isSubTypeEncrypted(subType)) {
-                        // 消息已加密，需要解密
                         char originalSubType = getOriginalSubType(subType);
                         
-                        // 获取群聊密钥
                         QByteArray key = EncryptionManager::instance().getCachedGroupKey(groupId);
                         
                         if (key.isEmpty()) {
-                            LOG_ERROR_FMT("[NetworkManager] Failed to get group key for history from group %1", groupId);
-                            // 发送解密失败的消息体
+                            LOG_ERROR_FMT("Failed to get group key for history from group %1", groupId);
                             decryptedContent.append(originalSubType);
                         } else {
-                            // 对内容进行XOR解密
                             QByteArray decrypted = EncryptionManager::instance().xorEncryptDecrypt(messageBody, key);
                             
                             if (decrypted.isEmpty() && !messageBody.isEmpty()) {
-                                LOG_ERROR_FMT("[NetworkManager] Failed to decrypt group history message from group %1", groupId);
-                                // 发送解密失败的消息体
+                                LOG_ERROR_FMT("Failed to decrypt group history message from group %1", groupId);
                                 decryptedContent.append(originalSubType);
                             } else {
-                                // 重新组装：原始子类型 + 解密后的内容
                                 decryptedContent.append(originalSubType);
                                 decryptedContent.append(decrypted);
                             }
                         }
                     } else {
-                        // 消息未加密，直接使用
                         decryptedContent = content;
                     }
                 } else {
@@ -649,71 +701,67 @@ void NetworkManager::onReadyRead()
             break;
         }
         case MSG_LEAVE_GROUP_RESP: {
+            if (body.size() < (int)sizeof(LeaveGroupResp)) break;
             LeaveGroupResp *resp = (LeaveGroupResp*)body.data();
             emit sigLeaveGroupResponse(resp->result, resp->groupId);
             break;
         }
         case MSG_INVITE_TO_GROUP_NOTIFY: {
+            if (body.size() < (int)sizeof(InviteToGroupNotify)) break;
             InviteToGroupNotify *notify = (InviteToGroupNotify*)body.data();
             emit sigInviteToGroupNotify(
                 notify->groupId,
-                QString::fromUtf8(notify->groupName),
+                QString::fromUtf8(notify->groupName, safe_strnlen(notify->groupName, 64)),
                 notify->inviterId,
-                QString::fromUtf8(notify->inviterName)
+                QString::fromUtf8(notify->inviterName, safe_strnlen(notify->inviterName, 32))
                 );
             break;
         }
         case MSG_FILE_RESUME_REQ: {
-            // 收到恢复传输请求（作为接收方）
             if(body.size() < (int)sizeof(FileResumeReq)){
                 break;
             }
             FileResumeReq *req = (FileResumeReq*)body.data();
-            QString fileId = QString::fromLatin1(req->fileId, strnlen(req->fileId, sizeof(req->fileId)));
-            emit sigFileResumeReq(fileId, header->src_id);
+            QString fileId = QString::fromLatin1(req->fileId, safe_strnlen(req->fileId, sizeof(req->fileId)));
+            emit sigFileResumeReq(fileId, srcId);
             break;
         }
         case MSG_FILE_RESUME_RESP: {
-            // 收到恢复传输响应（作为发送方）
             if(body.size() < (int)sizeof(FileResumeResp)){
                 break;
             }
             FileResumeResp *resp = (FileResumeResp*)body.data();
-            QString fileId = QString::fromLatin1(resp->fileId, strnlen(resp->fileId, sizeof(resp->fileId)));
+            QString fileId = QString::fromLatin1(resp->fileId, safe_strnlen(resp->fileId, sizeof(resp->fileId)));
             bool canResume = (resp->canResume == 1);
             int totalChunks = resp->totalChunks;
             int receivedChunks = resp->receivedChunks;
 
-            // 解析已接收分片位图
             QByteArray bitmap;
             if(canResume && totalChunks > 0){
                 int bitmapSize = (totalChunks + 7) / 8;
-                bitmap = body.mid(sizeof(FileResumeResp), bitmapSize);
+                if (body.size() >= (int)(sizeof(FileResumeResp) + bitmapSize)) {
+                    bitmap = body.mid(sizeof(FileResumeResp), bitmapSize);
+                }
             }
 
             emit sigFileResumeResp(fileId, canResume, totalChunks, receivedChunks, bitmap);
             break;
         }
         case MSG_FILE_VERIFY_REQ: {
-            // 收到文件校验请求（作为接收方）
             if(body.size() < (int)sizeof(FileVerifyReq)){
-                LOG_WARN("Invalid FileVerifyReq packet size");
                 break;
             }
-            // 文件校验由FileReceiver处理，这里只转发信号
             FileVerifyReq *req = (FileVerifyReq*)body.data();
-            QString fileId = QString::fromLatin1(req->fileId, strnlen(req->fileId, sizeof(req->fileId)));
-            QString fileMD5 = QString::fromLatin1(req->fileMD5, strnlen(req->fileMD5, sizeof(req->fileMD5)));
-            // TODO: 实现文件校验逻辑
+            QString fileId = QString::fromLatin1(req->fileId, safe_strnlen(req->fileId, sizeof(req->fileId)));
+            QString fileMD5 = QString::fromLatin1(req->fileMD5, safe_strnlen(req->fileMD5, sizeof(req->fileMD5)));
             break;
         }
         case MSG_FILE_VERIFY_RESP: {
-            // 收到文件校验响应（作为发送方）
             if(body.size() < (int)sizeof(FileVerifyResp)){
                 break;
             }
             FileVerifyResp *resp = (FileVerifyResp*)body.data();
-            QString fileId = QString::fromLatin1(resp->fileId, strnlen(resp->fileId, sizeof(resp->fileId)));
+            QString fileId = QString::fromLatin1(resp->fileId, safe_strnlen(resp->fileId, sizeof(resp->fileId)));
             bool verified = (resp->verified == 1);
             emit sigFileVerifyResp(fileId, verified);
             break;
@@ -721,8 +769,11 @@ void NetworkManager::onReadyRead()
         default:
             break;
         }
-
-        m_buffer = m_buffer.right(m_buffer.size() - totalLen);
+        } catch (const std::exception& e) {
+            LOG_ERROR_FMT("Exception in packet processing loop: %1", e.what());
+        } catch (...) {
+            LOG_ERROR("Unknown exception in packet processing loop");
+        }
     }
-
 }
+
