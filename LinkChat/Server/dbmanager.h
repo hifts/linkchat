@@ -10,9 +10,9 @@ class DBManager : public QObject
 {
     Q_OBJECT
 public:
-    static DBManager &instance();
+    explicit DBManager(QObject *parent = nullptr);
 
-    bool connectToDb();
+    bool connectToDb(const QString& connectionName);
 
     bool handelRegister(const QString &user,const QString &pwd);
     bool handelRegister(const QString &user, const QString &passwordHash, const QByteArray &salt);
@@ -74,7 +74,6 @@ public:
     bool isGroupMember(int groupId, int userId);
 
 private:
-    explicit DBManager(QObject *parent = nullptr);
     QSqlDatabase m_db;
 
 signals:

@@ -1,0 +1,4 @@
+build/
+LinkChat/build/
+*.user
+*.log

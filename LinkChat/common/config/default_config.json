@@ -2,6 +2,7 @@
   "server": {
     "port": 8080,
     "max_connections": 1000,
+    "socket_worker_threads": 4,
     "heartbeat_interval": 30000,
     "heartbeat_timeout": 90000,
     "database": {
@@ -9,7 +10,8 @@
       "port": 3306,
       "username": "root",
       "password": "root",
-      "database": "linkchat"
+      "database": "linkchat",
+      "worker_threads": 4
     },
     "log": {
       "level": "INFO",

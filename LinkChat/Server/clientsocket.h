@@ -10,9 +10,17 @@ class ClientSocket : public QTcpSocket
     Q_OBJECT
 public:
     explicit ClientSocket(QObject *parent = nullptr);
+    int uid() const;
+    void setHeartbeatTimeout(int timeoutMs);
+
+public slots:
+    void markLoggedOut();
+    void sendPacket(uint32_t type, const QByteArray& body, uint32_t src = 0, uint32_t dest = 0);
+    void notifyOfflineToFriends();
 
 private slots:
     void onReadyRead();
+    void checkHeartbeatTimeout();
 
 signals:
     void signalMsgReceived(uint32_t msgType, const QByteArray &data);
@@ -21,8 +29,15 @@ private:
     QByteArray m_buffer;
     int m_uid = 0;
     QString m_userName;
+    bool m_loginPending = false;
+    qint64 m_lastActiveMs = 0;
+    int m_heartbeatTimeoutMs = 90000;
 
-    void writePacket(ClientSocket* target, int type, const QByteArray& body, int src, int dest);
+    void handlePacket(uint32_t msgType, uint32_t srcId, uint32_t destId, const QByteArray& bodyData);
+    bool isFilePacket(uint32_t msgType) const;
+    void closeForProtocolError(const QString& reason);
+
+    void writePacket(ClientSocket* target, uint32_t type, const QByteArray& body, uint32_t src, uint32_t dest);
 
     void notifyFriends(int status);
 

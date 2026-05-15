@@ -7,6 +7,7 @@ namespace ConfigKeys {
     namespace Server {
         const QString PORT = "server.port";
         const QString MAX_CONNECTIONS = "server.max_connections";
+        const QString SOCKET_WORKER_THREADS = "server.socket_worker_threads";
         const QString HEARTBEAT_INTERVAL = "server.heartbeat_interval";
         const QString HEARTBEAT_TIMEOUT = "server.heartbeat_timeout";
         
@@ -16,6 +17,7 @@ namespace ConfigKeys {
             const QString USERNAME = "server.database.username";
             const QString PASSWORD = "server.database.password";
             const QString DATABASE = "server.database.database";
+            const QString WORKER_THREADS = "server.database.worker_threads";
         }
         
         namespace Log {

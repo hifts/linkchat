@@ -435,6 +435,18 @@ bool ConfigManager::validate()
         valid = false;
     }
 
+    const int dbWorkerThreads = readInt("server.database.worker_threads", 4);
+    if (dbWorkerThreads <= 0) {
+        m_validationErrors.append(QString("Invalid database worker_threads: %1 (must be > 0)").arg(dbWorkerThreads));
+        valid = false;
+    }
+
+    const int socketWorkerThreads = readInt("server.socket_worker_threads", 4);
+    if (socketWorkerThreads <= 0) {
+        m_validationErrors.append(QString("Invalid socket_worker_threads: %1 (must be > 0)").arg(socketWorkerThreads));
+        valid = false;
+    }
+
     const QString logLevel = readString("server.log.level", "INFO");
     if (!validateLogLevel(logLevel)) {
         m_validationErrors.append(QString("Invalid log level: %1 (must be DEBUG/INFO/WARNING/ERROR)").arg(logLevel));
@@ -572,6 +584,7 @@ void ConfigManager::createDefaultConfig()
     QJsonObject server;
     server["port"] = 8080;
     server["max_connections"] = 1000;
+    server["socket_worker_threads"] = 4;
     server["heartbeat_interval"] = 30000;
     server["heartbeat_timeout"] = 90000;
     
@@ -581,6 +594,7 @@ void ConfigManager::createDefaultConfig()
     database["username"] = "root";
     database["password"] = "root";
     database["database"] = "linkchat";
+    database["worker_threads"] = 4;
     server["database"] = database;
     
     QJsonObject log;

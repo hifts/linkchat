@@ -1,26 +1,23 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
-#include <QString>
-#include <QFile>
-#include <QTextStream>
 #include <QDateTime>
-#include <QMutex>
-#include <QDebug>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QQueue>
+#include <QString>
+#include <QTextStream>
+#include <QWaitCondition>
+#include <QDebug>
 
-/**
- * @brief 日志系统 - 支持多级别日志输出到文件和控制台
- * 
- * 使用示例:
- *   Logger::init("client.log");
- *   LOG_INFO("用户登录成功");
- *   LOG_ERROR("网络连接失败");
- */
+#include <thread>
+
 class Logger
 {
 public:
-    // 日志级别
     enum Level {
         DEBUG = 0,
         INFO  = 1,
@@ -28,72 +25,62 @@ public:
         ERROR = 3
     };
 
-    /**
-     * @brief 初始化日志系统
-     * @param logFileName 日志文件名（默认 app.log）
-     * @param minLevel 最小日志级别（低于此级别的不输出）
-     */
-    static void init(const QString &logFileName = "app.log", Level minLevel = DEBUG) {
-        instance().m_logFileName = logFileName;
-        instance().m_minLevel = minLevel;
-        instance().m_initialized = true;
-        
-        // 确保日志目录存在
-        QFileInfo fileInfo(logFileName);
-        if (!fileInfo.absoluteDir().exists()) {
-            QDir().mkpath(fileInfo.absolutePath());
+    static void init(const QString &logFileName = "app.log", Level minLevel = DEBUG)
+    {
+        Logger& inst = instance();
+        bool wasInitialized = false;
+        {
+            QMutexLocker locker(&inst.m_mutex);
+            wasInitialized = inst.m_initialized;
+            inst.m_logFileName = logFileName;
+            inst.m_minLevel = minLevel;
+            inst.m_initialized = true;
+
+            QFileInfo fileInfo(logFileName);
+            if (!fileInfo.absoluteDir().exists()) {
+                QDir().mkpath(fileInfo.absolutePath());
+            }
+
+            inst.ensureWorkerStartedLocked();
         }
-        
-        // 写入启动日志
-        log(INFO, "========== 日志系统启动 ==========");
+
+        if (wasInitialized) {
+            log(INFO, QString("========== Logger reconfigured: %1 ==========").arg(logFileName));
+        } else {
+            log(INFO, "========== Logger started ==========");
+        }
     }
 
-    /**
-     * @brief 写入日志
-     * @param level 日志级别
-     * @param message 日志内容
-     * @param file 源文件名（由宏自动填充）
-     * @param line 行号（由宏自动填充）
-     */
-    static void log(Level level, const QString &message, 
-                    const char *file = nullptr, int line = 0) {
-        if (!instance().m_initialized || level < instance().m_minLevel) {
+    static void log(Level level, const QString &message, const char *file = nullptr, int line = 0)
+    {
+        Logger& inst = instance();
+        if (!inst.m_initialized || level < inst.m_minLevel) {
             return;
         }
 
-        // 格式化时间戳
-        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
-        
-        // 格式化级别
-        QString levelStr = levelToString(level);
-        
-        // 格式化日志行
+        const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+        const QString levelStr = levelToString(level);
+
         QString logLine;
         if (file && line > 0) {
-            // 只保留文件名，不要完整路径
-            QString fileName = QFileInfo(file).fileName();
+            const QString fileName = QFileInfo(file).fileName();
             logLine = QString("[%1][%2][%3:%4] %5")
-                .arg(timestamp, levelStr, fileName)
-                .arg(line)
-                .arg(message);
+                          .arg(timestamp, levelStr, fileName)
+                          .arg(line)
+                          .arg(message);
         } else {
-            logLine = QString("[%1][%2] %3")
-                .arg(timestamp, levelStr, message);
+            logLine = QString("[%1][%2] %3").arg(timestamp, levelStr, message);
         }
 
-        // 线程安全：加锁
-        QMutexLocker locker(&instance().m_mutex);
-
-        // 写入文件
-        QFile file_out(instance().m_logFileName);
-        if (file_out.open(QIODevice::Append | QIODevice::Text)) {
-            QTextStream stream(&file_out);
-            stream.setCodec("UTF-8");
-            stream << logLine << "\n";
-            file_out.close();
+        {
+            QMutexLocker locker(&inst.m_mutex);
+            inst.m_queue.enqueue(logLine);
+            if (inst.m_queue.size() > inst.m_maxQueueSize) {
+                inst.m_queue.dequeue();
+            }
+            inst.m_wait.wakeOne();
         }
 
-        // 输出到控制台（带颜色）
         switch (level) {
         case DEBUG:
             qDebug().noquote() << logLine;
@@ -110,59 +97,133 @@ public:
         }
     }
 
-    /**
-     * @brief 设置最小日志级别
-     */
-    static void setMinLevel(Level level) {
+    static void setMinLevel(Level level)
+    {
         instance().m_minLevel = level;
     }
 
-    /**
-     * @brief 将字符串转换为日志级别
-     * @param levelStr 日志级别字符串（DEBUG/INFO/WARNING/ERROR，不区分大小写）
-     * @return Level 对应的日志级别，无效字符串返回 INFO
-     */
-    static Level stringToLevel(const QString& levelStr) {
-        QString upper = levelStr.toUpper();
+    static void shutdown()
+    {
+        Logger& inst = instance();
+        {
+            QMutexLocker locker(&inst.m_mutex);
+            inst.m_stopping = true;
+            inst.m_wait.wakeAll();
+        }
+        if (inst.m_worker.joinable()) {
+            inst.m_worker.join();
+        }
+    }
+
+    static Level stringToLevel(const QString& levelStr)
+    {
+        const QString upper = levelStr.toUpper();
         if (upper == "DEBUG") return DEBUG;
         if (upper == "INFO") return INFO;
         if (upper == "WARN" || upper == "WARNING") return WARN;
         if (upper == "ERROR") return ERROR;
-        return INFO; // 默认返回 INFO
+        return INFO;
     }
 
 private:
-    Logger() : m_initialized(false), m_minLevel(DEBUG) {}
-    
-    static Logger& instance() {
+    Logger() = default;
+    ~Logger()
+    {
+        shutdown();
+    }
+
+    static Logger& instance()
+    {
         static Logger instance;
         return instance;
     }
 
-    static QString levelToString(Level level) {
+    static QString levelToString(Level level)
+    {
         switch (level) {
         case DEBUG: return "DEBUG";
         case INFO:  return "INFO";
         case WARN:  return "WARN";
         case ERROR: return "ERROR";
-        default:    return "UNKNW";
+        default:    return "UNKNOWN";
         }
     }
 
-    QString m_logFileName;
-    Level m_minLevel;
-    bool m_initialized;
-    QMutex m_mutex;
-};
+    void ensureWorkerStartedLocked()
+    {
+        if (m_worker.joinable()) {
+            return;
+        }
 
-// 使用这些宏可以自动记录文件名和行号
+        m_stopping = false;
+        m_worker = std::thread([this]() {
+            QFile out;
+            QString openedPath;
+
+            while (true) {
+                QQueue<QString> batch;
+                {
+                    QMutexLocker locker(&m_mutex);
+                    if (m_queue.isEmpty() && !m_stopping) {
+                        m_wait.wait(&m_mutex, 1000);
+                    }
+                    while (!m_queue.isEmpty() && batch.size() < 512) {
+                        batch.enqueue(m_queue.dequeue());
+                    }
+                    if (m_stopping && batch.isEmpty()) {
+                        break;
+                    }
+                }
+
+                if (batch.isEmpty()) {
+                    continue;
+                }
+
+                const QString path = m_logFileName;
+                if (!out.isOpen() || openedPath != path) {
+                    if (out.isOpen()) {
+                        out.close();
+                    }
+                    openedPath = path;
+                    out.setFileName(path);
+                    out.open(QIODevice::Append | QIODevice::Text);
+                }
+
+                if (!out.isOpen()) {
+                    continue;
+                }
+
+                QTextStream stream(&out);
+                stream.setCodec("UTF-8");
+                while (!batch.isEmpty()) {
+                    stream << batch.dequeue() << "\n";
+                }
+                stream.flush();
+                out.flush();
+            }
+
+            if (out.isOpen()) {
+                out.close();
+            }
+        });
+    }
+
+    QString m_logFileName;
+    Level m_minLevel = DEBUG;
+    bool m_initialized = false;
+    bool m_stopping = false;
+    QMutex m_mutex;
+    QWaitCondition m_wait;
+    QQueue<QString> m_queue;
+    std::thread m_worker;
+    const int m_maxQueueSize = 20000;
+};
 
 #define LOG_DEBUG(msg) Logger::log(Logger::DEBUG, msg, __FILE__, __LINE__)
 #define LOG_INFO(msg)  Logger::log(Logger::INFO, msg, __FILE__, __LINE__)
 #define LOG_WARN(msg)  Logger::log(Logger::WARN, msg, __FILE__, __LINE__)
 #define LOG_ERROR(msg) Logger::log(Logger::ERROR, msg, __FILE__, __LINE__)
 
-// 格式化版本（支持 QString::arg）
 #define LOG_DEBUG_FMT(fmt, ...) Logger::log(Logger::DEBUG, QString(fmt).arg(__VA_ARGS__), __FILE__, __LINE__)
 #define LOG_INFO_FMT(fmt, ...)  Logger::log(Logger::INFO, QString(fmt).arg(__VA_ARGS__), __FILE__, __LINE__)
 #define LOG_WARN_FMT(fmt, ...)  Logger::log(Logger::WARN, QString(fmt).arg(__VA_ARGS__), __FILE__, __LINE__)

@@ -1,7 +1,5 @@
 ﻿#include "dbmanager.h"
 
-#include "tcpserver.h"
-#include "encryptionmanager.h"
 #include "configmanager.h"
 #include "configkeys.h"
 #include "logger.h"
@@ -10,25 +8,18 @@
 #include <QDebug>
 #include <QSqlQuery>
 #include <QDateTime>
-#include <QDataStream>
-
-DBManager &DBManager::instance()
-{
-    static DBManager instance;
-    return instance;
-}
 
 DBManager::DBManager(QObject *parent)
     : QObject{parent}
 {}
 
 
-bool DBManager::connectToDb()
+bool DBManager::connectToDb(const QString& connectionName)
 {
-    if (QSqlDatabase::contains("linkchat_connection")) {
-        m_db = QSqlDatabase::database("linkchat_connection");
+    if (QSqlDatabase::contains(connectionName)) {
+        m_db = QSqlDatabase::database(connectionName);
     } else {
-        m_db = QSqlDatabase::addDatabase("QMYSQL", "linkchat_connection");
+        m_db = QSqlDatabase::addDatabase("QMYSQL", connectionName);
     }
 
     const QString dbHost = ConfigManager::instance().getString(
@@ -48,7 +39,8 @@ bool DBManager::connectToDb()
     m_db.setUserName(dbUser);
     m_db.setPassword(dbPassword);
 
-    LOG_INFO(QString("[DB] Connecting MySQL host=%1 port=%2 database=%3 user=%4 password_empty=%5")
+    LOG_INFO(QString("[DB] Connecting MySQL connection=%1 host=%2 port=%3 database=%4 user=%5 password_empty=%6")
+             .arg(connectionName)
              .arg(dbHost)
              .arg(dbPort)
              .arg(dbName)
@@ -247,9 +239,7 @@ QList<FriendInfo> DBManager::getFriendList(int uid)
             QDateTime lastMsgTime = query.value(2).toDateTime();
             info.lastMsgTime = lastMsgTime.isValid() ? lastMsgTime.toSecsSinceEpoch() : 0;
 
-            bool online = TcpServer::instance().isOnline(info.id);
-
-            info.status = online? 1 : 0;
+            info.status = 0;
             list.append(info);
         }
     }
@@ -294,8 +284,7 @@ QList<FriendInfo> DBManager::searchUsers(const QString &keyword, int currentId)
             memset(info.userName,0,32);
             strncpy(info.userName,name.toStdString().c_str(),32);
 
-            bool online = TcpServer::instance().isOnline(info.id);
-            info.status = online? 1 : 0;
+            info.status = 0;
 
             list.append(info);
         }
@@ -667,7 +656,7 @@ QList<GroupMemberInfo> DBManager::getGroupMembers(int groupId)
             strncpy(info.userName, name.toUtf8().constData(), 31);
             info.userName[31] = '\0';
             info.role = query.value(2).toInt();
-            info.status = TcpServer::instance().isOnline(info.userId) ? 1 : 0;
+            info.status = 0;
             list.append(info);
         }
     }
