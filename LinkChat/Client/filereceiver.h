@@ -25,6 +25,17 @@ struct ReceivingFileInfo {
     QString expectedMD5;                // 期望的MD5值（用于验证）
 };
 
+struct ReceiveChunkResult {
+    QString errorMessage;
+    QString tempPath;
+    QString savePath;
+    QString expectedMD5;
+    bool completed = false;
+    int progressPercent = 0;
+    qint64 receivedSize = 0;
+    qint64 totalSize = 0;
+};
+
 class FileReceiver : public QObject
 {
     Q_OBJECT
@@ -60,6 +71,12 @@ private:
     
     // 内部实现函数（在锁保护下调用）
     bool startReceivingInternal(const QString &fileId, const QString &fileName, qint64 fileSize, int senderId, const QString &expectedMD5);
+    ReceiveChunkResult receiveChunkLocked(const QString &fileId, int chunkIndex, const QByteArray &data);
+    QString validateChunk(const QString &fileId, const ReceivingFileInfo *info, int chunkIndex, const QByteArray &data) const;
+    QByteArray decryptChunk(const ReceivingFileInfo *info, const QByteArray &data, QString *errorMessage) const;
+    bool writeChunkToFile(ReceivingFileInfo *info, int chunkIndex, const QByteArray &data, QString *errorMessage);
+    ReceiveChunkResult markChunkStored(const QString &fileId, ReceivingFileInfo *info, int chunkIndex, qint64 chunkSize);
+    void cleanupFailedReceive(const QString &fileId, ReceivingFileInfo *info);
     
     explicit FileReceiver(QObject *parent = nullptr);
     ~FileReceiver();

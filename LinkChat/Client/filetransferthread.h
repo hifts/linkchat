@@ -23,6 +23,8 @@ public:
 
     void setCompletedChunks(const QSet<int> &completedChunks);
 
+    QByteArray readEncryptedChunk(int chunkIndex, int *totalChunks = nullptr, QString *error = nullptr);
+
     void pauseTransfer();
 
     void resumeTransfer();

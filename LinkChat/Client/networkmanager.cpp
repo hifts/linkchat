@@ -533,12 +533,25 @@ void NetworkManager::onReadyRead()
             }
 
             try {
-                emit receiveChunk(fileId, chunkIndex, chunkData);
+                emit receiveChunk(fileId, chunkIndex, chunkData, srcId);
             } catch (const std::exception& e) {
                 LOG_ERROR(QString("Exception emitting receiveChunk: %1").arg(e.what()));
             } catch (...) {
                 LOG_ERROR("Unknown exception emitting receiveChunk");
             }
+            break;
+        }
+        case MSG_FILE_TRANSFER_ACK:{
+            if (body.size() < (int)sizeof(FileTransferAck)) {
+                break;
+            }
+
+            FileTransferAck ack;
+            memset(&ack, 0, sizeof(FileTransferAck));
+            memcpy(&ack, body.data(), sizeof(FileTransferAck));
+
+            QString fileId = QString::fromLatin1(ack.fileId, safe_strnlen(ack.fileId, sizeof(ack.fileId)));
+            emit sigFileTransferAck(fileId, static_cast<int>(ack.chunkIndex), srcId);
             break;
         }
         case MSG_CREATE_GROUP_RESP: {

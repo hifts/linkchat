@@ -42,6 +42,7 @@ public:
 
     // 标记分片已完成
     void markChunkCompleted(const QString& fileId, int chunkIndex);
+    void flush();
 
     // 获取已完成的分片列表
     QSet<int> getCompletedChunks(const QString& fileId);

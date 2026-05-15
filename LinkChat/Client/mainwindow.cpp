@@ -666,6 +666,7 @@ void MainWindow::connectSignalsAndSlots()
 
     // 关联文件接收信号
     connect(&NetworkManager::instance(),&NetworkManager::receiveChunk,this,&MainWindow::onFileReceiveChunk);
+    connect(&NetworkManager::instance(),&NetworkManager::sigFileTransferAck,this,&MainWindow::onFileTransferAck);
     connect(&FileReceiver::instance(),&FileReceiver::receiveProgress,this,&MainWindow::onFileReceiveProgress);
 
     connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,
@@ -1580,9 +1581,25 @@ void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk,
     }
 }
 
-void MainWindow::onFileReceiveChunk(const QString &fileId, int chunkIndex, const QByteArray &chunk)
+void MainWindow::onFileReceiveChunk(const QString &fileId, int chunkIndex, const QByteArray &chunk, int senderId)
 {
-    FileReceiver::instance().receiveChunk(fileId,chunkIndex,chunk);
+    if (!FileReceiver::instance().receiveChunk(fileId,chunkIndex,chunk)) {
+        return;
+    }
+
+    FileTransferAck ack;
+    memset(&ack, 0, sizeof(FileTransferAck));
+    strncpy(ack.fileId, fileId.toUtf8().constData(), sizeof(ack.fileId) - 1);
+    ack.chunkIndex = chunkIndex;
+
+    QByteArray packet = makePacket(MSG_FILE_TRANSFER_ACK, QByteArray((char*)&ack, sizeof(FileTransferAck)), 0, senderId);
+    NetworkManager::instance().sendRow(packet);
+}
+
+void MainWindow::onFileTransferAck(const QString &fileId, int chunkIndex, int receiverId)
+{
+    Q_UNUSED(receiverId)
+    FileTransferManager::instance().onChunkAcked(fileId, chunkIndex);
 }
 
 void MainWindow::onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total)

@@ -2,10 +2,12 @@
 #define FILETRANSFERMANAGER_H
 
 #include "filetransferthread.h"
+#include "filetransfersession.h"
 #include "transferstatemanager.h"
 
 #include <QObject>
 #include <QMap>
+#include <QTimer>
 
 
 struct FileTransferInfo {
@@ -16,7 +18,10 @@ struct FileTransferInfo {
     int friendId;
     bool isReceiving;
     int progress;
+    int totalChunks;
+    bool allChunksSent;
     FileTransferThread *thread;
+    FileTransferSession session;
 };
 
 class FileTransferManager : public QObject
@@ -40,6 +45,8 @@ public:
     QList<TransferState> getIncompleteTransfers();
 
     QString generateFileId(const QString &filePath);
+
+    void onChunkAcked(const QString &fileId, int chunkIndex);
 signals:
     void transferStarted(const QString &fileId, const QString &fileName);
     void transferProgress(const QString &fileId, int percent, qint64 sent, qint64 total);
@@ -56,13 +63,18 @@ private slots:
     void onTransferCompleted();
     void onTransferFailed(const QString &error);
     void onTransferPaused(int lastChunkIndex);
+    void dispatchPendingChunks();
 private:
     explicit FileTransferManager(QObject *parent = nullptr);
     ~FileTransferManager();
 
+    void dispatchTransfer(FileTransferInfo *info);
+    void sendChunk(FileTransferInfo *info, int chunkIndex, bool isRetry);
+
 
 
     QMap<QString,FileTransferInfo*> m_transfers;
+    QTimer *m_dispatchTimer;
     int m_currentUserId;
 };
 

@@ -13,8 +13,19 @@ add_executable(LoadTester
     main.cpp
 )
 
+add_executable(FileTransferRecoveryTest
+    filetransfer_recovery_test.cpp
+    ../Client/filetransfersession.h
+    ../Client/filetransfersession.cpp
+)
+
 target_link_libraries(LoadTester PRIVATE
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Network
+    LinkChatCommon
+)
+
+target_link_libraries(FileTransferRecoveryTest PRIVATE
+    Qt${QT_VERSION_MAJOR}::Core
     LinkChatCommon
 )

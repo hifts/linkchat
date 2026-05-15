@@ -26,6 +26,7 @@ set(PROJECT_SOURCES
     res.qrc
     chat_ui/contactdelegate.h chat_ui/contactdelegate.cpp
     filetransferthread.h filetransferthread.cpp
+    filetransfersession.h filetransfersession.cpp
     filetransfermanager.h filetransfermanager.cpp
     filereceiver.h filereceiver.cpp
     groupdialog.h groupdialog.cpp groupdialog.ui

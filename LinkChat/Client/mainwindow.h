@@ -125,7 +125,8 @@ private slots:
 
     void onSendFileChunk(const QString &fileId, const QByteArray &chunk, int chunkIndex, int totalChunks, int friendId);
 
-    void onFileReceiveChunk(const QString &fileId,int chunkIndex,const QByteArray &chunk);
+    void onFileReceiveChunk(const QString &fileId, int chunkIndex, const QByteArray &chunk, int senderId);
+    void onFileTransferAck(const QString &fileId, int chunkIndex, int receiverId);
     void onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total);
     void onFileReceiveCompleted(const QString &fileId,const QString &savePath);
     void onFileReceiveFailed(const QString &fileId, const QString &error);

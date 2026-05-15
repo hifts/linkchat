@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QSaveFile>
 
 TransferStateManager &TransferStateManager::instance()
 {
@@ -66,14 +67,32 @@ void TransferStateManager::markChunkCompleted(const QString &fileId, int chunkIn
 {
     QMutexLocker locker(&m_mutex);
 
+    if(chunkIndex < 0){
+        LOG_WARN_FMT("Invalid completed chunk index: %1", chunkIndex);
+        return;
+    }
+
     if(m_transfers.contains(fileId)){
-        m_transfers[fileId].completedChunks.insert(chunkIndex);
-        m_transfers[fileId].timestamp = QDateTime::currentSecsSinceEpoch();
+        TransferState &state = m_transfers[fileId];
+        if(state.totalChunks > 0 && chunkIndex >= state.totalChunks){
+            LOG_WARN(QString("Ignore out-of-range chunk completion: fileId=%1 chunk=%2 total=%3")
+                     .arg(fileId).arg(chunkIndex).arg(state.totalChunks));
+            return;
+        }
+
+        state.completedChunks.insert(chunkIndex);
+        state.timestamp = QDateTime::currentSecsSinceEpoch();
     }
 
     if(chunkIndex % 10 == 0){
         saveToFile();
     }
+}
+
+void TransferStateManager::flush()
+{
+    QMutexLocker locker(&m_mutex);
+    saveToFile();
 }
 
 QSet<int> TransferStateManager::getCompletedChunks(const QString &fileId)
@@ -158,10 +177,17 @@ void TransferStateManager::saveToFile()
     }
 
     QJsonDocument doc(transferStates);
-    QFile file(m_stateFilePath);
+    QSaveFile file(m_stateFilePath);
     if(file.open(QIODevice::WriteOnly | QIODevice::Text)){
-        file.write(doc.toJson());
-        file.close();
+        const QByteArray json = doc.toJson();
+        if(file.write(json) != json.size()){
+            LOG_ERROR_FMT("Failed to write transfer states to file:%1",m_stateFilePath);
+            file.cancelWriting();
+            return;
+        }
+        if(!file.commit()){
+            LOG_ERROR_FMT("Failed to commit transfer states to file:%1",m_stateFilePath);
+        }
     }else{
         LOG_ERROR_FMT("Failed to save transfer states to file:%1",m_stateFilePath);
     }

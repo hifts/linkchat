@@ -82,7 +82,8 @@ signals:
 
     void sigFileTransferResponse(const QString &fileId,bool accepted);
 
-    void receiveChunk(const QString &fileId,int chunkIndex, const QByteArray &data);
+    void receiveChunk(const QString &fileId, int chunkIndex, const QByteArray &data, int senderId);
+    void sigFileTransferAck(const QString &fileId, int chunkIndex, int receiverId);
 
     void sigCreateGroupResult(bool success, int groupId);
 

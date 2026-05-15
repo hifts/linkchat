@@ -51,6 +51,56 @@ void FileTransferThread::setCompletedChunks(const QSet<int> &completedChunks)
     }
 }
 
+QByteArray FileTransferThread::readEncryptedChunk(int chunkIndex, int *totalChunks, QString *error)
+{
+    QFile file(m_filePath);
+    if(!file.open(QIODevice::ReadOnly)){
+        if(error) *error = "无法打开文件：" + file.errorString();
+        return QByteArray();
+    }
+
+    const qint64 fileSize = file.size();
+    if(fileSize <= 0){
+        if(error) *error = "文件大小为0";
+        return QByteArray();
+    }
+
+    const int chunkCount = (fileSize + m_chunkSize - 1) / m_chunkSize;
+    if(totalChunks){
+        *totalChunks = chunkCount;
+    }
+    if(chunkIndex < 0 || chunkIndex >= chunkCount){
+        if(error) *error = "分片索引无效";
+        return QByteArray();
+    }
+
+    const quint64 offset = static_cast<quint64>(chunkIndex) * m_chunkSize;
+    if(!file.seek(offset)){
+        if(error) *error = "无法定位到分片位置：" + file.errorString();
+        return QByteArray();
+    }
+
+    const QByteArray chunk = file.read(m_chunkSize);
+    if(chunk.isEmpty()){
+        if(error) *error = "读取文件分片失败";
+        return QByteArray();
+    }
+
+    const QByteArray encryptionKey = EncryptionManager::instance().getCachedChatKey(m_currentUserId, m_friendId);
+    if(encryptionKey.isEmpty()){
+        if(error) *error = "无法获取加密密钥";
+        return QByteArray();
+    }
+
+    const QByteArray encryptedChunk = EncryptionManager::instance().xorEncryptDecrypt(chunk, encryptionKey);
+    if(encryptedChunk.isEmpty()){
+        if(error) *error = "文件分片加密失败";
+        return QByteArray();
+    }
+
+    return encryptedChunk;
+}
+
 void FileTransferThread::pauseTransfer()
 {
     QMutexLocker locker(&m_mutex);
@@ -207,15 +257,6 @@ void FileTransferThread::run()
         // 发送进度更新信号
         emit progressUpdated(percent,totalSent,fileSize);
 
-        // 标记已传输的分片
-        {
-            QMutexLocker locker(&m_mutex);
-            m_completedChunks.insert(i);
-        }
-
-        // 标记分片已完成（每次都要更新内存状态，内部会每10个分片才持久化一次）
-        TransferStateManager::instance().markChunkCompleted(m_fileId, i);
-
         // 延迟10ms发送下一片避免网络拥塞
         msleep(10);
     }
@@ -236,12 +277,8 @@ void FileTransferThread::run()
         }
     }
 
-    // 传输完成，清理状态
-    TransferStateManager::instance().removeTransferState(m_fileId);
     emit transferCompleted();
 }
-
-
 
 
 

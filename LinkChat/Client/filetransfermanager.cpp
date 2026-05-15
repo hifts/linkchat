@@ -19,7 +19,11 @@ FileTransferManager &FileTransferManager::instance()
 FileTransferManager::FileTransferManager(QObject *parent)
     : QObject{parent}
     , m_currentUserId(0)
-{}
+{
+    m_dispatchTimer = new QTimer(this);
+    m_dispatchTimer->setInterval(300);
+    connect(m_dispatchTimer, &QTimer::timeout, this, &FileTransferManager::dispatchPendingChunks);
+}
 
 FileTransferManager::~FileTransferManager()
 {
@@ -66,6 +70,8 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
     info->friendId = friendId;
     info->isReceiving = false;
     info->progress = 0;
+    info->totalChunks = (info->fileSize + 64 * 1024 - 1) / (64 * 1024);
+    info->allChunksSent = false;
     info->thread = new FileTransferThread(filePath,fileId,friendId,m_currentUserId,this);
 
     TransferState savedState = TransferStateManager::instance().loadTransferState(fileId);
@@ -83,7 +89,7 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
         state.fileSize = info->fileSize;
         state.friendId = friendId;
         state.isSending = true;
-        state.totalChunks = (info->fileSize + 64 * 1024 - 1) / (64 * 1024);
+        state.totalChunks = info->totalChunks;
         state.completedChunks = QSet<int>();
         state.timestamp = QDateTime::currentSecsSinceEpoch();
 
@@ -95,6 +101,9 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
         LOG_INFO_FMT("New file transfer started: %1, total chunks: %2", info->fileName, state.totalChunks);
     }
 
+    TransferState currentState = TransferStateManager::instance().loadTransferState(fileId);
+    info->session.reset(info->totalChunks, currentState.completedChunks);
+
     connect(info->thread,&FileTransferThread::chunkReady,this,&FileTransferManager::onChunkReady);
     connect(info->thread,&FileTransferThread::progressUpdated,this,&FileTransferManager::onProgressUpdated);
     connect(info->thread,&FileTransferThread::transferCompleted,this,&FileTransferManager::onTransferCompleted);
@@ -105,7 +114,10 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
 
     emit transferStarted(fileId,info->fileName);
 
-    info->thread->start();
+    dispatchTransfer(info);
+    if(!m_dispatchTimer->isActive()){
+        m_dispatchTimer->start();
+    }
 
     return fileId;
 }
@@ -119,6 +131,7 @@ void FileTransferManager::pauseTransfer(const QString &fileId)
     FileTransferInfo *info = m_transfers[fileId];
     if(info->thread){
         info->thread->pauseTransfer();
+        TransferStateManager::instance().flush();
         LOG_INFO_FMT("File transfer paused:%1",fileId);
     }
 }
@@ -157,6 +170,8 @@ void FileTransferManager::cancelTransfer(const QString &fileId)
     }
 
     m_transfers.remove(fileId);
+    TransferStateManager::instance().removeTransferState(fileId);
+    TransferStateManager::instance().flush();
     delete info;
     LOG_INFO_FMT("File transfer canceled:%1",fileId);
 }
@@ -169,6 +184,122 @@ FileTransferInfo *FileTransferManager::getTransferInfo(const QString &fileId)
 QList<TransferState> FileTransferManager::getIncompleteTransfers()
 {
     return TransferStateManager::instance().getIncompleteTransfers();
+}
+
+void FileTransferManager::onChunkAcked(const QString &fileId, int chunkIndex)
+{
+    FileTransferInfo *info = m_transfers.value(fileId, nullptr);
+    if (!info) {
+        return;
+    }
+
+    if (chunkIndex >= info->totalChunks) {
+        LOG_WARN(QString("Ignore invalid ACK: fileId=%1 chunk=%2 total=%3")
+                 .arg(fileId).arg(chunkIndex).arg(info->totalChunks));
+        return;
+    }
+
+    TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+    if (state.fileId.isEmpty()) {
+        LOG_WARN_FMT("Ignore ACK without transfer state: %1", fileId);
+        return;
+    }
+
+    if (chunkIndex >= 0) {
+        if (!info->session.markAcked(chunkIndex)) {
+            return;
+        }
+        TransferStateManager::instance().markChunkCompleted(fileId, chunkIndex);
+        state = TransferStateManager::instance().loadTransferState(fileId);
+    }
+
+    const int totalChunks = state.totalChunks > 0 ? state.totalChunks : info->totalChunks;
+    const int ackedChunks = info->session.ackedCount();
+
+    info->progress = totalChunks > 0 ? (ackedChunks * 100) / totalChunks : 0;
+    emit transferProgress(fileId, info->progress, qMin<qint64>(info->fileSize, (qint64)ackedChunks * 64 * 1024), info->fileSize);
+
+    if (info->session.isComplete() || (info->allChunksSent && totalChunks > 0 && ackedChunks >= totalChunks)) {
+        TransferStateManager::instance().removeTransferState(fileId);
+        TransferStateManager::instance().flush();
+        emit transferCompleted(fileId);
+
+        QTimer::singleShot(1000,this,[=](){
+            if(m_transfers.contains(fileId)){
+                FileTransferInfo *currentInfo = m_transfers[fileId];
+                if(currentInfo->thread){
+                    currentInfo->thread->wait();
+                    delete currentInfo->thread;
+                }
+                m_transfers.remove(fileId);
+                delete currentInfo;
+            }
+        });
+    }
+
+    dispatchTransfer(info);
+}
+
+void FileTransferManager::dispatchPendingChunks()
+{
+    const auto transfers = m_transfers.values();
+    for(FileTransferInfo *info : transfers){
+        dispatchTransfer(info);
+    }
+
+    bool hasActiveTransfer = false;
+    for(FileTransferInfo *info : m_transfers.values()){
+        if(info && !info->session.isComplete()){
+            hasActiveTransfer = true;
+            break;
+        }
+    }
+    if(!hasActiveTransfer){
+        m_dispatchTimer->stop();
+    }
+}
+
+void FileTransferManager::dispatchTransfer(FileTransferInfo *info)
+{
+    if(!info || !info->thread){
+        return;
+    }
+
+    constexpr int kMaxInFlightChunks = 8;
+    constexpr int kAckTimeoutMs = 3000;
+    constexpr int kMaxRetryAttempts = 5;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    for(int chunkIndex : info->session.timedOutChunks(nowMs, kAckTimeoutMs, kMaxRetryAttempts)){
+        sendChunk(info, chunkIndex, true);
+    }
+
+    for(int chunkIndex : info->session.takeSendWindow(kMaxInFlightChunks)){
+        sendChunk(info, chunkIndex, false);
+    }
+
+    info->allChunksSent = info->session.inFlightCount() > 0
+                          && info->session.ackedCount() + info->session.inFlightCount() >= info->totalChunks;
+}
+
+void FileTransferManager::sendChunk(FileTransferInfo *info, int chunkIndex, bool isRetry)
+{
+    QString error;
+    int totalChunks = 0;
+    const QByteArray chunk = info->thread->readEncryptedChunk(chunkIndex, &totalChunks, &error);
+    if(chunk.isEmpty()){
+        info->session.markFailed();
+        emit transferFailed(info->fileId, error.isEmpty() ? "读取文件分片失败" : error);
+        cancelTransfer(info->fileId);
+        return;
+    }
+
+    info->session.markSent(chunkIndex, QDateTime::currentMSecsSinceEpoch());
+    emit sendFileChunk(info->fileId, chunk, chunkIndex, totalChunks, info->friendId);
+
+    if(isRetry){
+        LOG_WARN(QString("Retry file chunk: fileId=%1 chunk=%2").arg(info->fileId).arg(chunkIndex));
+    }
 }
 
 void FileTransferManager::onChunkReady(const QByteArray &chunk, int chunkIndex, int totalChunks)
@@ -220,19 +351,16 @@ void FileTransferManager::onTransferCompleted()
     for (auto it = m_transfers.begin(); it != m_transfers.end(); ++it) {
         if(it.value()->thread == thread){
             QString fileId = it.key();
-            emit transferCompleted(fileId);
+            it.value()->allChunksSent = true;
 
-            QTimer::singleShot(1000,this,[=](){
-                if(m_transfers.contains(fileId)){
-                    FileTransferInfo *info = m_transfers[fileId];
-                    if(info->thread){
-                        info->thread->wait();
-                        delete info->thread;
-                    }
-                    m_transfers.remove(fileId);
-                    delete info;
-                }
-            });
+            TransferState state = TransferStateManager::instance().loadTransferState(fileId);
+            if (!state.fileId.isEmpty()
+                && state.totalChunks > 0
+                && state.completedChunks.size() >= state.totalChunks) {
+                onChunkAcked(fileId, -1);
+            } else {
+                LOG_INFO_FMT("All chunks sent for %1, waiting for receiver ACKs", fileId);
+            }
             break;
         }
     }

@@ -655,6 +655,7 @@ void ClientSocket::handlePacket(uint32_t msgType, uint32_t srcId, uint32_t destI
     case MSG_FILE_TRANSFER_REQ:
     case MSG_FILE_TRANSFER_RESP:
     case MSG_FILE_CHUNK:
+    case MSG_FILE_TRANSFER_ACK:
     case MSG_FILE_RESUME_REQ:
     case MSG_FILE_RESUME_RESP:
     case MSG_FILE_VERIFY_REQ:
