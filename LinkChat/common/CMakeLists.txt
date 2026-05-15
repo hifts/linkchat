@@ -16,6 +16,8 @@ qt5_add_resources(COMMON_RESOURCES config/config.qrc)
 add_library(LinkChatCommon STATIC
     packet.h
     packet.cpp
+    packetcodec.h
+    packetcodec.cpp
     logger.h
     encryptionmanager.h
     encryptionmanager.cpp

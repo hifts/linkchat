@@ -17,6 +17,7 @@ set(PROJECT_SOURCES
     main.cpp
     networkmanager.h
     networkmanager.cpp
+    clientmessagerouter.h clientmessagerouter.cpp
     logindialog.h logindialog.cpp logindialog.ui
     registerdialog.h registerdialog.cpp registerdialog.ui
     mainwindow.h mainwindow.cpp mainwindow.ui

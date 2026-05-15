@@ -17,6 +17,7 @@ set(PROJECT_SOURCES
     socketworker.h socketworker.cpp
     socketworkerpool.h socketworkerpool.cpp
     clientsocket.h clientsocket.cpp
+    servermessagerouter.h servermessagerouter.cpp
     dbmanager.h dbmanager.cpp
     dbworkerpool.h dbworkerpool.cpp
     serverstats.h serverstats.cpp

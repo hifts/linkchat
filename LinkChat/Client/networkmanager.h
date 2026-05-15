@@ -22,6 +22,7 @@
 class NetworkManager : public QObject
 {
     Q_OBJECT
+    friend class ClientMessageRouter;
 public:
     static NetworkManager &instance();
 

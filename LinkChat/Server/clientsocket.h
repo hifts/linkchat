@@ -8,6 +8,7 @@
 class ClientSocket : public QTcpSocket
 {
     Q_OBJECT
+    friend class ServerMessageRouter;
 public:
     explicit ClientSocket(QObject *parent = nullptr);
     int uid() const;
@@ -33,8 +34,6 @@ private:
     qint64 m_lastActiveMs = 0;
     int m_heartbeatTimeoutMs = 90000;
 
-    void handlePacket(uint32_t msgType, uint32_t srcId, uint32_t destId, const QByteArray& bodyData);
-    bool isFilePacket(uint32_t msgType) const;
     void closeForProtocolError(const QString& reason);
 
     void writePacket(ClientSocket* target, uint32_t type, const QByteArray& body, uint32_t src, uint32_t dest);
