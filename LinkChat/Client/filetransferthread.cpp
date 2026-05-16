@@ -11,12 +11,14 @@ FileTransferThread::FileTransferThread(const QString &filePath,
                                        const QString &fileId,
                                        int friendId,
                                        int currentUserId,
+                                       qint64 transferSize,
                                        QObject *parent)
     : QThread(parent)
     , m_filePath(filePath)
     , m_fileId(fileId)
     , m_friendId(friendId)
     , m_currentUserId(currentUserId)
+    , m_transferSize(transferSize)
     , m_chunkSize(64 * 1024)  // 默认64KB每片
     , m_stopped(false)
     , m_paused(false)
@@ -59,9 +61,14 @@ QByteArray FileTransferThread::readEncryptedChunk(int chunkIndex, int *totalChun
         return QByteArray();
     }
 
-    const qint64 fileSize = file.size();
+    const qint64 currentFileSize = file.size();
+    const qint64 fileSize = m_transferSize > 0 ? m_transferSize : currentFileSize;
     if(fileSize <= 0){
         if(error) *error = "文件大小为0";
+        return QByteArray();
+    }
+    if(currentFileSize < fileSize){
+        if(error) *error = "文件大小已变化，请重新选择文件";
         return QByteArray();
     }
 
@@ -80,9 +87,15 @@ QByteArray FileTransferThread::readEncryptedChunk(int chunkIndex, int *totalChun
         return QByteArray();
     }
 
-    const QByteArray chunk = file.read(m_chunkSize);
+    const qint64 remaining = fileSize - static_cast<qint64>(offset);
+    const qint64 readSize = qMin<qint64>(m_chunkSize, remaining);
+    const QByteArray chunk = file.read(readSize);
     if(chunk.isEmpty()){
         if(error) *error = "读取文件分片失败";
+        return QByteArray();
+    }
+    if(chunk.size() != readSize){
+        if(error) *error = "读取文件分片不完整";
         return QByteArray();
     }
 
@@ -158,9 +171,15 @@ void FileTransferThread::run()
     }
 
     // 计算总分片数
-    qint64 fileSize = file.size();
+    const qint64 currentFileSize = file.size();
+    qint64 fileSize = m_transferSize > 0 ? m_transferSize : currentFileSize;
     if(fileSize == 0){
         emit transferFailed("文件大小为0");
+        file.close();
+        return;
+    }
+    if(currentFileSize < fileSize){
+        emit transferFailed("文件大小已变化，请重新选择文件");
         file.close();
         return;
     }
@@ -220,9 +239,15 @@ void FileTransferThread::run()
             break;
         }
 
-        // 读取一个分片
-        QByteArray chunk = file.read(m_chunkSize);
+        // 读取一个分片，只发送请求时声明范围内的数据，避免活动文件增长导致分片大小不一致。
+        const qint64 remaining = fileSize - static_cast<qint64>(offset);
+        const qint64 readSize = qMin<qint64>(m_chunkSize, remaining);
+        QByteArray chunk = file.read(readSize);
         if(chunk.isEmpty()){
+            break;
+        }
+        if(chunk.size() != readSize){
+            emit transferFailed("读取文件分片不完整");
             break;
         }
 
@@ -279,8 +304,6 @@ void FileTransferThread::run()
 
     emit transferCompleted();
 }
-
-
 
 
 

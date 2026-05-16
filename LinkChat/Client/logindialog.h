@@ -13,6 +13,10 @@ class LoginDialog : public QDialog
     Q_OBJECT
 
 public:
+    enum DialogResult {
+        RegisterRequested = QDialog::Accepted + 1
+    };
+
     explicit LoginDialog(QWidget *parent = nullptr);
     ~LoginDialog();
 
@@ -24,6 +28,7 @@ public:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void on_btnReg_clicked();
@@ -45,6 +50,8 @@ private:
     QString m_pendingCredentialHash;
     bool m_waitingSalt = false;
     QPoint m_dragPosition;
+
+    void applyRoundedMask();
 };
 
 #endif // LOGINDIALOG_H

@@ -77,6 +77,9 @@ private:
     bool writeChunkToFile(ReceivingFileInfo *info, int chunkIndex, const QByteArray &data, QString *errorMessage);
     ReceiveChunkResult markChunkStored(const QString &fileId, ReceivingFileInfo *info, int chunkIndex, qint64 chunkSize);
     void cleanupFailedReceive(const QString &fileId, ReceivingFileInfo *info);
+    bool finalizeTempFile(const ReceiveChunkResult &result, QString *errorMessage);
+    bool copyFileSafely(const QString &sourcePath, const QString &destPath, bool isExecutable, QString *errorMessage);
+    bool verifyCompletedFile(const ReceiveChunkResult &result, QString *errorMessage);
     
     explicit FileReceiver(QObject *parent = nullptr);
     ~FileReceiver();

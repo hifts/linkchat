@@ -228,10 +228,13 @@
           <item>
            <widget class="QListWidget" name="contactList">
             <property name="verticalScrollBarPolicy">
-             <enum>Qt::ScrollBarAsNeeded</enum>
+             <enum>Qt::ScrollBarAlwaysOn</enum>
             </property>
             <property name="horizontalScrollBarPolicy">
              <enum>Qt::ScrollBarAlwaysOff</enum>
+            </property>
+            <property name="verticalScrollMode">
+             <enum>QAbstractItemView::ScrollPerPixel</enum>
             </property>
            </widget>
           </item>
@@ -293,10 +296,13 @@
           </size>
          </property>
          <property name="verticalScrollBarPolicy">
-          <enum>Qt::ScrollBarAlwaysOff</enum>
+          <enum>Qt::ScrollBarAlwaysOn</enum>
          </property>
          <property name="horizontalScrollBarPolicy">
           <enum>Qt::ScrollBarAlwaysOff</enum>
+         </property>
+         <property name="verticalScrollMode">
+          <enum>QAbstractItemView::ScrollPerPixel</enum>
          </property>
         </widget>
        </item>
@@ -358,10 +364,13 @@
       <item>
        <widget class="QListView" name="chatList">
         <property name="verticalScrollBarPolicy">
-         <enum>Qt::ScrollBarAsNeeded</enum>
+         <enum>Qt::ScrollBarAlwaysOn</enum>
         </property>
         <property name="horizontalScrollBarPolicy">
          <enum>Qt::ScrollBarAlwaysOff</enum>
+        </property>
+        <property name="verticalScrollMode">
+         <enum>QAbstractItemView::ScrollPerPixel</enum>
         </property>
         <property name="selectionMode">
          <enum>QAbstractItemView::NoSelection</enum>
@@ -381,14 +390,14 @@
         </property>
         <item>
          <widget class="QTextEdit" name="msgEdit">
-          <property name="maximumSize">
-           <size>
+         <property name="maximumSize">
+          <size>
             <width>16777215</width>
-            <height>40</height>
+            <height>96</height>
            </size>
           </property>
           <property name="verticalScrollBarPolicy">
-           <enum>Qt::ScrollBarAlwaysOff</enum>
+           <enum>Qt::ScrollBarAsNeeded</enum>
           </property>
           <property name="horizontalScrollBarPolicy">
            <enum>Qt::ScrollBarAlwaysOff</enum>
@@ -397,10 +406,16 @@
         </item>
         <item>
          <widget class="QPushButton" name="btnSend">
+          <property name="minimumSize">
+           <size>
+            <width>64</width>
+            <height>36</height>
+           </size>
+          </property>
           <property name="maximumSize">
            <size>
-            <width>16777215</width>
-            <height>40</height>
+            <width>64</width>
+            <height>36</height>
            </size>
           </property>
           <property name="text">

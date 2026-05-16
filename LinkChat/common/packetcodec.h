@@ -6,6 +6,9 @@
 #include <QByteArray>
 #include <QString>
 
+constexpr uint32_t DEFAULT_MAX_NORMAL_PACKET_LEN = 1u * 1024u * 1024u;
+constexpr uint32_t DEFAULT_MAX_FILE_PACKET_LEN = 1u * 1024u * 1024u;
+
 struct DecodedPacket
 {
     PDUHeader header;

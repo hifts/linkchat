@@ -60,21 +60,21 @@ void ServerStats::report()
     const quint64 deltaDb = dbTasks - m_lastDbTasks;
     const double avgDbMs = dbTasks == 0 ? 0.0 : static_cast<double>(dbTime) / static_cast<double>(dbTasks);
 
-    LOG_WARN(QString("[Stats] conn=%1 users=%2 accepted=%3 rejected=%4 closed=%5 "
-                     "pps_in=%6 pps_out=%7 heartbeat_per_5s=%8 login_ok_5s=%9 login_fail_5s=%10 db_pending=%11 db_done_5s=%12 db_avg_ms=%13")
-                 .arg(m_currentConnections.load())
-                 .arg(m_currentUsers.load())
-                 .arg(m_totalAccepted.load())
-                 .arg(m_totalRejected.load())
-                 .arg(m_totalClosed.load())
-                 .arg(packetsIn - m_lastPacketsIn)
-                 .arg(packetsOut - m_lastPacketsOut)
-                 .arg(heartbeats - m_lastHeartbeats)
-                 .arg(loginSuccess - m_lastLoginSuccess)
-                 .arg(loginFailed - m_lastLoginFailed)
-                 .arg(m_pendingDbTasks.load())
-                 .arg(deltaDb)
-                 .arg(avgDbMs, 0, 'f', 2));
+    LOG_DEBUG(QString("[Stats] conn=%1 users=%2 accepted=%3 rejected=%4 closed=%5 "
+                      "pps_in=%6 pps_out=%7 heartbeat_per_5s=%8 login_ok_5s=%9 login_fail_5s=%10 db_pending=%11 db_done_5s=%12 db_avg_ms=%13")
+                  .arg(m_currentConnections.load())
+                  .arg(m_currentUsers.load())
+                  .arg(m_totalAccepted.load())
+                  .arg(m_totalRejected.load())
+                  .arg(m_totalClosed.load())
+                  .arg(packetsIn - m_lastPacketsIn)
+                  .arg(packetsOut - m_lastPacketsOut)
+                  .arg(heartbeats - m_lastHeartbeats)
+                  .arg(loginSuccess - m_lastLoginSuccess)
+                  .arg(loginFailed - m_lastLoginFailed)
+                  .arg(m_pendingDbTasks.load())
+                  .arg(deltaDb)
+                  .arg(avgDbMs, 0, 'f', 2));
 
     m_lastPacketsIn = packetsIn;
     m_lastPacketsOut = packetsOut;

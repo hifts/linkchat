@@ -19,17 +19,34 @@ Q_DECLARE_METATYPE(QSharedPointer<QList<int>>)
 using ChatHistoryList = QList<std::tuple<int, QByteArray, quint64>>;
 Q_DECLARE_METATYPE(QSharedPointer<ChatHistoryList>)
 using PendingRequestList = QList<QPair<int, QString>>;
-using OfflineMessageList = QList<QPair<int, QByteArray>>;
-using GroupOfflineMessageList = QList<std::tuple<int, int, QString, QByteArray>>;
+using OfflineMessageList = QList<OfflineMessage>;
+using GroupOfflineMessageList = QList<GroupOfflineMessage>;
+using GroupPendingMessageList = QList<GroupPendingMessage>;
 using GroupInfoList = QList<GroupInfo>;
 using GroupMemberInfoList = QList<GroupMemberInfo>;
 using GroupHistoryList = QList<std::tuple<int, QString, QByteArray, quint64>>;
 Q_DECLARE_METATYPE(QSharedPointer<PendingRequestList>)
 Q_DECLARE_METATYPE(QSharedPointer<OfflineMessageList>)
 Q_DECLARE_METATYPE(QSharedPointer<GroupOfflineMessageList>)
+Q_DECLARE_METATYPE(QSharedPointer<GroupPendingMessageList>)
 Q_DECLARE_METATYPE(QSharedPointer<GroupInfoList>)
 Q_DECLARE_METATYPE(QSharedPointer<GroupMemberInfoList>)
 Q_DECLARE_METATYPE(QSharedPointer<GroupHistoryList>)
+
+namespace {
+QString fixedUtf8(const char* data, qsizetype maxLen)
+{
+    if (!data || maxLen <= 0) {
+        return QString();
+    }
+
+    const void* end = std::memchr(data, '\0', static_cast<size_t>(maxLen));
+    const qsizetype len = end
+                              ? static_cast<const char*>(end) - data
+                              : maxLen;
+    return QString::fromUtf8(data, len);
+}
+}
 
 ServerMessageRouter::ServerMessageRouter(ClientSocket* socket)
     : m_socket(socket)
@@ -41,6 +58,15 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
     Q_UNUSED(srcId);
     ClientSocket* socket = m_socket;
 
+    const bool authMessage = msgType == MSG_HEARTBEAT_REQ
+                             || msgType == MSG_REGISTER_REQ
+                             || msgType == MSG_LOGIN_SALT_REQ
+                             || msgType == MSG_LOGIN_REQ;
+    if (!authMessage && socket->m_uid == 0) {
+        LOG_WARN(QString("Reject unauthenticated message type=%1").arg(msgType));
+        return;
+    }
+
     switch (msgType) {
     case MSG_HEARTBEAT_REQ: {
         ServerStats::instance().heartbeatReceived();
@@ -51,13 +77,13 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         if (bodyData.size() < (int)sizeof(RegisterReq)) break;
         RegisterReq req;
         memcpy(&req, bodyData.constData(), sizeof(req));
-        const QString userName = QString::fromUtf8(req.userName);
-        const QString passwordHashBase64 = QString::fromUtf8(req.passwordHash);
+        const QString userName = fixedUtf8(req.userName, sizeof(req.userName));
+        const QString passwordHashBase64 = fixedUtf8(req.passwordHash, sizeof(req.passwordHash));
         const QByteArray salt = QByteArray::fromBase64(QByteArray(req.salt));
 
         DbWorkerPool::instance().enqueue(
             [userName, passwordHashBase64, salt](DBManager& db) {
-                return QVariant(db.handelRegister(userName, passwordHashBase64, salt));
+                return QVariant(db.handleRegister(userName, passwordHashBase64, salt));
             },
             socket,
             [socket](const QVariant& result) {
@@ -72,7 +98,7 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         if (bodyData.size() < (int)sizeof(LoginSaltReq)) break;
         LoginSaltReq req;
         memcpy(&req, bodyData.constData(), sizeof(req));
-        const QString userName = QString::fromUtf8(req.userName);
+        const QString userName = fixedUtf8(req.userName, sizeof(req.userName));
 
         DbWorkerPool::instance().enqueue(
             [userName](DBManager& db) {
@@ -102,8 +128,8 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
 
         LoginReq req;
         memcpy(&req, bodyData.constData(), sizeof(req));
-        const QString userName = QString::fromUtf8(req.userName);
-        const QString passwordHash = QString::fromUtf8(req.passwordHash);
+        const QString userName = fixedUtf8(req.userName, sizeof(req.userName));
+        const QString passwordHash = fixedUtf8(req.passwordHash, sizeof(req.passwordHash));
 
         DbWorkerPool::instance().enqueue(
             [userName, passwordHash](DBManager& db) {
@@ -133,8 +159,9 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
                             [loginUid](DBManager& db) {
                                 QVariantMap data;
                                 data["pending"] = QVariant::fromValue(QSharedPointer<PendingRequestList>::create(db.getPendingRequests(loginUid)));
-                                data["offline"] = QVariant::fromValue(QSharedPointer<OfflineMessageList>::create(db.getAndClearOfflineMessages(loginUid)));
-                                data["groupOffline"] = QVariant::fromValue(QSharedPointer<GroupOfflineMessageList>::create(db.getAndClearGroupOfflineMessages(loginUid)));
+                                data["offline"] = QVariant::fromValue(QSharedPointer<OfflineMessageList>::create(db.getPendingOfflineMessages(loginUid)));
+                                data["groupPending"] = QVariant::fromValue(QSharedPointer<GroupPendingMessageList>::create(db.getPendingGroupMessagesByCursor(loginUid)));
+                                data["groupOffline"] = QVariant::fromValue(QSharedPointer<GroupOfflineMessageList>::create(db.getPendingGroupOfflineMessages(loginUid)));
                                 return data;
                             },
                             socket,
@@ -145,13 +172,15 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
                                 const QVariantMap data = result.toMap();
                                 const auto pending = data.value("pending").value<QSharedPointer<PendingRequestList>>();
                                 const auto offline = data.value("offline").value<QSharedPointer<OfflineMessageList>>();
+                                const auto groupPending = data.value("groupPending").value<QSharedPointer<GroupPendingMessageList>>();
                                 const auto groupOffline = data.value("groupOffline").value<QSharedPointer<GroupOfflineMessageList>>();
-                                QTimer::singleShot(200, socket, [socket, loginUid, pending, offline, groupOffline]() {
+                                QTimer::singleShot(200, socket, [socket, loginUid, pending, offline, groupPending, groupOffline]() {
                                     if (socket->m_uid != loginUid || socket->state() != QAbstractSocket::ConnectedState) {
                                         return;
                                     }
                                     if (pending) socket->pushFriendRequests(*pending);
                                     if (offline) socket->pushOfflineMsgs(*offline);
+                                    if (groupPending) socket->pushPendingGroupMsgs(*groupPending);
                                     if (groupOffline) socket->pushGroupOfflineMsgs(*groupOffline);
                                 });
                             });
@@ -198,19 +227,17 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         const int targetId = destId;
         DbWorkerPool::instance().enqueue(
             [senderId, targetId, bodyData](DBManager& db) {
+                if (!db.isFriend(senderId, targetId)) {
+                    LOG_WARN(QString("Reject private chat from %1 to non-friend %2").arg(senderId).arg(targetId));
+                    return QVariant(false);
+                }
                 db.saveChatMessage(senderId, targetId, bodyData);
-                return QVariant();
+                if (!TcpServer::instance().sendToUser(targetId, MSG_CHAT_TEXT, bodyData, senderId, targetId)) {
+                    db.saveOfflineMessage(senderId, targetId, bodyData);
+                }
+                return QVariant(true);
             },
             socket);
-
-        if (!TcpServer::instance().sendToUser(targetId, MSG_CHAT_TEXT, bodyData, senderId, targetId)) {
-            DbWorkerPool::instance().enqueue(
-                [senderId, targetId, bodyData](DBManager& db) {
-                    db.saveOfflineMessage(senderId, targetId, bodyData);
-                    return QVariant();
-                },
-                socket);
-        }
         break;
     }
     case MSG_CHAT_HISTORY_REQ: {
@@ -220,6 +247,10 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         DbWorkerPool::instance().enqueue(
             [currentUid, friendId](DBManager& db) {
                 using HistoryList = QList<std::tuple<int, QByteArray, quint64>>;
+                if (!db.isFriend(currentUid, friendId)) {
+                    LOG_WARN(QString("Reject private history uid=%1 friend=%2").arg(currentUid).arg(friendId));
+                    return QVariant::fromValue(QSharedPointer<HistoryList>::create());
+                }
                 return QVariant::fromValue(QSharedPointer<HistoryList>::create(db.getChatHistory(currentUid, friendId, 200)));
             },
             socket,
@@ -245,7 +276,7 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         if (bodyData.size() < (int)sizeof(SearchReq)) break;
         SearchReq req;
         memcpy(&req, bodyData.constData(), sizeof(req));
-        const QString keyword = QString::fromUtf8(req.keyword).trimmed();
+        const QString keyword = fixedUtf8(req.keyword, sizeof(req.keyword)).trimmed();
         const int currentUid = socket->m_uid;
         DbWorkerPool::instance().enqueue(
             [keyword, currentUid](DBManager& db) {
@@ -350,7 +381,7 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         if (bodyData.size() < (int)sizeof(CreateGroupReq)) break;
         CreateGroupReq req;
         memcpy(&req, bodyData.constData(), sizeof(req));
-        const QString groupName = QString::fromUtf8(req.groupName);
+        const QString groupName = fixedUtf8(req.groupName, sizeof(req.groupName));
         const int creatorId = socket->m_uid;
         DbWorkerPool::instance().enqueue(
             [groupName, creatorId](DBManager& db) {
@@ -392,8 +423,13 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
     case MSG_GROUP_MEMBER_LIST_REQ: {
         if (bodyData.size() < (int)sizeof(int)) break;
         const int groupId = *(int*)bodyData.constData();
+        const int currentUid = socket->m_uid;
         DbWorkerPool::instance().enqueue(
-            [groupId](DBManager& db) {
+            [groupId, currentUid](DBManager& db) {
+                if (!db.isGroupMember(groupId, currentUid)) {
+                    LOG_WARN(QString("Reject group member list uid=%1 group=%2").arg(currentUid).arg(groupId));
+                    return QVariant::fromValue(QSharedPointer<GroupMemberInfoList>::create());
+                }
                 return QVariant::fromValue(QSharedPointer<GroupMemberInfoList>::create(db.getGroupMembers(groupId)));
             },
             socket,
@@ -430,7 +466,20 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         DbWorkerPool::instance().enqueue(
             [groupId, targetUserId, inviterId, inviterName](DBManager& db) {
                 QVariantMap out;
-                const bool ok = db.addGroupMember(groupId, targetUserId, 0);
+                const bool inviterInGroup = db.isGroupMember(groupId, inviterId);
+                const bool targetExists = !db.getUserNameById(targetUserId).isEmpty();
+                const bool targetInGroup = db.isGroupMember(groupId, targetUserId);
+                const bool ok = inviterInGroup && targetExists && !targetInGroup
+                                && db.addGroupMember(groupId, targetUserId, 0);
+                if (!ok) {
+                    LOG_WARN(QString("Reject group invite inviter=%1 target=%2 group=%3 inviterInGroup=%4 targetExists=%5 targetInGroup=%6")
+                                 .arg(inviterId)
+                                 .arg(targetUserId)
+                                 .arg(groupId)
+                                 .arg(inviterInGroup)
+                                 .arg(targetExists)
+                                 .arg(targetInGroup));
+                }
                 out["ok"] = ok;
                 out["groupName"] = QString();
                 if (ok) {
@@ -475,6 +524,10 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         const int currentUid = socket->m_uid;
         DbWorkerPool::instance().enqueue(
             [groupId, currentUid](DBManager& db) {
+                if (!db.isGroupMember(groupId, currentUid)) {
+                    LOG_WARN(QString("Reject leave group uid=%1 group=%2").arg(currentUid).arg(groupId));
+                    return QVariant(false);
+                }
                 return QVariant(db.removeGroupMember(groupId, currentUid));
             },
             socket,
@@ -496,12 +549,32 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         const QByteArray content = bodyData.mid(sizeof(GroupChatMessage));
         DbWorkerPool::instance().enqueue(
             [groupId, senderId, content](DBManager& db) {
-                db.saveGroupMessage(groupId, senderId, content);
-                return QVariant::fromValue(QSharedPointer<QList<int>>::create(db.getGroupMemberIds(groupId)));
+                if (!db.isGroupMember(groupId, senderId)) {
+                    LOG_WARN(QString("Reject group chat uid=%1 group=%2").arg(senderId).arg(groupId));
+                    QVariantMap out;
+                    out["messageId"] = QVariant::fromValue<qulonglong>(0);
+                    out["members"] = QVariant::fromValue(QSharedPointer<QList<int>>::create());
+                    return out;
+                }
+                QVariantMap out;
+                const quint64 messageId = db.saveGroupMessage(groupId, senderId, content);
+                if (messageId > 0) {
+                    db.markGroupMessageDelivered(groupId, senderId, messageId);
+                    out["members"] = QVariant::fromValue(QSharedPointer<QList<int>>::create(db.getGroupMemberIds(groupId)));
+                } else {
+                    out["members"] = QVariant::fromValue(QSharedPointer<QList<int>>::create());
+                }
+                out["messageId"] = QVariant::fromValue<qulonglong>(messageId);
+                return out;
             },
             socket,
             [socket, groupId, senderId, senderName, content](const QVariant& result) {
-                const auto memberIdsPtr = result.value<QSharedPointer<QList<int>>>();
+                const QVariantMap out = result.toMap();
+                const quint64 messageId = out.value("messageId").toULongLong();
+                if (messageId == 0) {
+                    return;
+                }
+                const auto memberIdsPtr = out.value("members").value<QSharedPointer<QList<int>>>();
                 const QList<int> memberIds = memberIdsPtr ? *memberIdsPtr : QList<int>();
                 GroupChatMessage header;
                 memset(&header, 0, sizeof(header));
@@ -509,18 +582,12 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
                 header.senderId = senderId;
                 strncpy(header.senderName, senderName.toUtf8().constData(), 31);
                 QByteArray forwardBody;
+                forwardBody.append(reinterpret_cast<const char*>(&messageId), sizeof(messageId));
                 forwardBody.append((char*)&header, sizeof(header));
                 forwardBody.append(content);
                 for (int memberId : memberIds) {
                     if (memberId == senderId) continue;
-                    if (!TcpServer::instance().sendToUser(memberId, MSG_GROUP_CHAT_TEXT, forwardBody, senderId, memberId)) {
-                        DbWorkerPool::instance().enqueue(
-                            [groupId, senderId, memberId, content](DBManager& db) {
-                                db.saveGroupOfflineMessage(groupId, senderId, memberId, content);
-                                return QVariant();
-                            },
-                            socket);
-                    }
+                    TcpServer::instance().sendToUser(memberId, MSG_GROUP_CHAT_TEXT, forwardBody, senderId, memberId);
                 }
             });
         break;
@@ -528,8 +595,13 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
     case MSG_GROUP_CHAT_HISTORY_REQ: {
         if (bodyData.size() < (int)sizeof(int)) break;
         const int groupId = *(int*)bodyData.constData();
+        const int currentUid = socket->m_uid;
         DbWorkerPool::instance().enqueue(
-            [groupId](DBManager& db) {
+            [groupId, currentUid](DBManager& db) {
+                if (!db.isGroupMember(groupId, currentUid)) {
+                    LOG_WARN(QString("Reject group history uid=%1 group=%2").arg(currentUid).arg(groupId));
+                    return QVariant::fromValue(QSharedPointer<GroupHistoryList>::create());
+                }
                 return QVariant::fromValue(QSharedPointer<GroupHistoryList>::create(db.getGroupChatHistory(groupId, 200)));
             },
             socket,
@@ -562,7 +634,8 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
     case MSG_FILE_RESUME_REQ:
     case MSG_FILE_RESUME_RESP:
     case MSG_FILE_VERIFY_REQ:
-    case MSG_FILE_VERIFY_RESP: {
+    case MSG_FILE_VERIFY_RESP:
+    case MSG_FILE_TRANSFER_CANCEL: {
         const int targetId = destId;
         if (!TcpServer::instance().sendToUser(targetId, msgType, bodyData, socket->m_uid, targetId)
             && msgType == MSG_FILE_RESUME_REQ) {
@@ -576,6 +649,50 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
             resp.canResume = 0;
             socket->sendPacket(MSG_FILE_RESUME_RESP, QByteArray((char*)&resp, sizeof(resp)), targetId, socket->m_uid);
         }
+        break;
+    }
+    case MSG_OFFLINE_MSG_ACK: {
+        if (bodyData.size() < (int)sizeof(OfflineMsgAck)) break;
+        OfflineMsgAck ack;
+        memcpy(&ack, bodyData.constData(), sizeof(ack));
+        const int currentUid = socket->m_uid;
+        DbWorkerPool::instance().enqueue(
+            [ack, currentUid](DBManager& db) {
+                return QVariant(db.markOfflineMessageDelivered(ack.offlineMsgId, currentUid));
+            },
+            socket);
+        break;
+    }
+    case MSG_GROUP_OFFLINE_MSG_ACK: {
+        if (bodyData.size() < (int)sizeof(OfflineMsgAck)) break;
+        OfflineMsgAck ack;
+        memcpy(&ack, bodyData.constData(), sizeof(ack));
+        const int currentUid = socket->m_uid;
+        DbWorkerPool::instance().enqueue(
+            [ack, currentUid](DBManager& db) {
+                return QVariant(db.markGroupOfflineMessageDelivered(ack.offlineMsgId, currentUid));
+            },
+            socket);
+        break;
+    }
+    case MSG_GROUP_MSG_DELIVERED_ACK:
+    case MSG_GROUP_MSG_READ_ACK: {
+        if (bodyData.size() < (int)sizeof(GroupMsgCursorAck)) break;
+        GroupMsgCursorAck ack;
+        memcpy(&ack, bodyData.constData(), sizeof(ack));
+        const int currentUid = socket->m_uid;
+        const bool readAck = msgType == MSG_GROUP_MSG_READ_ACK;
+        DbWorkerPool::instance().enqueue(
+            [ack, currentUid, readAck](DBManager& db) {
+                if (!db.isGroupMember(ack.groupId, currentUid)) {
+                    LOG_WARN(QString("Reject group cursor ack uid=%1 group=%2").arg(currentUid).arg(ack.groupId));
+                    return QVariant(false);
+                }
+                return QVariant(readAck
+                                    ? db.markGroupMessageRead(ack.groupId, currentUid, ack.messageId)
+                                    : db.markGroupMessageDelivered(ack.groupId, currentUid, ack.messageId));
+            },
+            socket);
         break;
     }
     default:

@@ -32,7 +32,7 @@ public:
 
     void setCurrentUserId(int userId);
 
-    QString startSendFile(const QString &fileId,const QString &filePath,int friendId);
+    QString startSendFile(const QString &fileId,const QString &filePath,int friendId, qint64 declaredFileSize = 0);
 
     void pauseTransfer(const QString &fileId);
 

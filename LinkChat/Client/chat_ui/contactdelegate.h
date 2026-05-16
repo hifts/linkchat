@@ -13,7 +13,8 @@ public:
         RoleUnread = Qt::UserRole + 2,
         RoleIsFriend = Qt::UserRole + 3,
         RoleLastMsgTime = Qt::UserRole + 4,
-        RoleShowTime = Qt::UserRole + 5
+        RoleShowTime = Qt::UserRole + 5,
+        RoleOnlineStatus = Qt::UserRole + 6
     };
 
     explicit ContactDelegate(QObject *parent = nullptr);
@@ -21,9 +22,6 @@ public:
 public:
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const;
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const;
-
-private:
-    QString formatMessageTime(const QDateTime &msgTime) const;
 
 signals:
 };

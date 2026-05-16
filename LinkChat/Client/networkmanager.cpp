@@ -5,11 +5,6 @@
 
 #include <cstring>
 
-namespace {
-constexpr uint32_t MAX_NORMAL_PACKET_LEN = 50u * 1024u * 1024u;
-constexpr uint32_t MAX_FILE_PACKET_LEN = 50u * 1024u * 1024u;
-}
-
 NetworkManager &NetworkManager::instance()
 {
     static NetworkManager instance;
@@ -121,6 +116,18 @@ void NetworkManager::requestFileVerify(const QString &fileId, const QString &fil
     sendRow(packet);
 }
 
+void NetworkManager::requestCancelTransfer(const QString &fileId, int friendId, quint8 reason)
+{
+    FileTransferCancel req;
+    memset(&req, 0, sizeof(req));
+    strncpy(req.fileId, fileId.toLatin1().constData(), sizeof(req.fileId) - 1);
+    req.reason = reason;
+
+    QByteArray body((char*)&req, sizeof(req));
+    QByteArray packet = makePacket(MSG_FILE_TRANSFER_CANCEL, body, 0, friendId);
+    sendRow(packet);
+}
+
 void NetworkManager::sendHeartbeat()
 {
     if (!isConnected()) {
@@ -175,7 +182,7 @@ void NetworkManager::onReadyRead()
 {
     m_buffer.append(m_socket->readAll());
 
-    PacketCodec codec(MAX_NORMAL_PACKET_LEN, MAX_FILE_PACKET_LEN);
+    PacketCodec codec(DEFAULT_MAX_NORMAL_PACKET_LEN, DEFAULT_MAX_FILE_PACKET_LEN);
     ClientMessageRouter router(this);
 
     while (true) {
@@ -191,12 +198,6 @@ void NetworkManager::onReadyRead()
         }
 
         const uint32_t msgType = packet.header.msg_type;
-        if (msgType != MSG_FILE_CHUNK) {
-            LOG_DEBUG(QString("Received packet: type=%1, len=%2")
-                          .arg(msgType)
-                          .arg(packet.header.total_len));
-        }
-
         router.dispatch(msgType, packet.header.src_id, packet.body);
     }
 }

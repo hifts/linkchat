@@ -17,9 +17,9 @@ HeartbeatManager::HeartbeatManager(QObject *parent)
     m_heartbeatTimeout = ConfigManager::instance().getInt(
         ConfigKeys::Client::HEARTBEAT_TIMEOUT, 15000);
     
-    LOG_INFO(QString("HeartbeatManager initialized with interval=%1ms, timeout=%2ms")
-                 .arg(m_heartbeatInterval)
-                 .arg(m_heartbeatTimeout));
+    LOG_DEBUG(QString("HeartbeatManager initialized with interval=%1ms, timeout=%2ms")
+                  .arg(m_heartbeatInterval)
+                  .arg(m_heartbeatTimeout));
     
     // 初始化心跳发送定时器
     m_heartbeatTimer = new QTimer(this);
@@ -39,11 +39,11 @@ HeartbeatManager::HeartbeatManager(QObject *parent)
 void HeartbeatManager::start()
 {
     if(m_isActive){
-        LOG_WARN("Heartbeat is running...");
+        LOG_DEBUG("Heartbeat is already running");
         return;
     }
 
-    LOG_INFO("start heart manager");
+    LOG_DEBUG("Start heartbeat manager");
     m_isActive = true;
     m_missedHeartbeats = 0;
 
@@ -55,11 +55,11 @@ void HeartbeatManager::start()
 void HeartbeatManager::stop()
 {
     if(!m_isActive){
-        LOG_INFO("Heartbeat has stopped");
+        LOG_DEBUG("Heartbeat is already stopped");
         return;
     }
 
-    LOG_INFO("Stop heart");
+    LOG_DEBUG("Stop heartbeat manager");
     m_isActive = false;
 
     m_heartbeatTimer->stop();
@@ -77,7 +77,6 @@ void HeartbeatManager::onHeartbeatReceived()
 
     // 重启超时定时器
     m_timeoutCheckTimer->start();
-    LOG_INFO("收到心跳响应，重置计数");
 }
 
 void HeartbeatManager::onSendHeartbeat()
@@ -91,7 +90,6 @@ void HeartbeatManager::onSendHeartbeat()
 
     // 发送信号
     emit needSendHeartbeat();
-    LOG_INFO(QString("发送心跳包，当前错过次数：%1").arg(m_missedHeartbeats));
 }
 
 void HeartbeatManager::onCheckTimeout()
@@ -121,14 +119,14 @@ void HeartbeatManager::setHeartbeatInterval(int ms)
 {
     m_heartbeatInterval = ms;
     m_heartbeatTimer->setInterval(m_heartbeatInterval);
-    LOG_INFO(QString("设置心跳间隔为%1毫秒").arg(ms));
+    LOG_DEBUG(QString("Heartbeat interval set to %1 ms").arg(ms));
 }
 
 void HeartbeatManager::setHeartbeatTimeout(int ms)
 {
     m_heartbeatTimeout = ms;
     m_timeoutCheckTimer->setInterval(ms);
-    LOG_INFO(QString("设置了心跳超时检测为%1毫秒").arg(ms));
+    LOG_DEBUG(QString("Heartbeat timeout set to %1 ms").arg(ms));
 }
 
 void HeartbeatManager::setMaxMissedHeartbeats(int newMaxMissedHeartbeats)
@@ -145,7 +143,7 @@ void HeartbeatManager::onConfigChanged(const QString& key)
         
         if (newInterval != m_heartbeatInterval) {
             setHeartbeatInterval(newInterval);
-            LOG_INFO(QString("心跳间隔已更新为%1毫秒（配置热加载）").arg(newInterval));
+            LOG_DEBUG(QString("Heartbeat interval updated to %1 ms").arg(newInterval));
         }
     }
     else if (key == ConfigKeys::Client::HEARTBEAT_TIMEOUT) {
@@ -154,7 +152,7 @@ void HeartbeatManager::onConfigChanged(const QString& key)
         
         if (newTimeout != m_heartbeatTimeout) {
             setHeartbeatTimeout(newTimeout);
-            LOG_INFO(QString("心跳超时已更新为%1毫秒（配置热加载）").arg(newTimeout));
+            LOG_DEBUG(QString("Heartbeat timeout updated to %1 ms").arg(newTimeout));
         }
     }
 }

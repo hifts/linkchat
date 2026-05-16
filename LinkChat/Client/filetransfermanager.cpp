@@ -48,10 +48,9 @@ QString FileTransferManager::generateFileId(const QString &filePath)
 void FileTransferManager::setCurrentUserId(int userId)
 {
     m_currentUserId = userId;
-    LOG_INFO_FMT("FileTransferManager: Current user ID set to %1", userId);
 }
 
-QString FileTransferManager::startSendFile(const QString &fileId,const QString &filePath, int friendId)
+QString FileTransferManager::startSendFile(const QString &fileId,const QString &filePath, int friendId, qint64 declaredFileSize)
 {
     QFileInfo fileInfo(filePath);
 
@@ -59,20 +58,28 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
         LOG_WARN_FMT("File not found:%1",filePath);
         return QString();
     }
+    if (declaredFileSize < 0) {
+        declaredFileSize = 0;
+    }
+    if (declaredFileSize > 0 && fileInfo.size() < declaredFileSize) {
+        emit transferFailed(fileId, "文件大小已变化，请重新选择文件");
+        return QString();
+    }
 
     QString fid = fileId;
+    const qint64 transferSize = declaredFileSize > 0 ? declaredFileSize : fileInfo.size();
 
     FileTransferInfo *info = new FileTransferInfo;
     info->fileId = fileId;
     info->fileName = fileInfo.fileName();
     info->filePath = filePath;
-    info->fileSize = fileInfo.size();
+    info->fileSize = transferSize;
     info->friendId = friendId;
     info->isReceiving = false;
     info->progress = 0;
     info->totalChunks = (info->fileSize + 64 * 1024 - 1) / (64 * 1024);
     info->allChunksSent = false;
-    info->thread = new FileTransferThread(filePath,fileId,friendId,m_currentUserId,this);
+    info->thread = new FileTransferThread(filePath,fileId,friendId,m_currentUserId,transferSize,this);
 
     TransferState savedState = TransferStateManager::instance().loadTransferState(fileId);
     if(!savedState.fileId.isEmpty() && savedState.isSending && savedState.fileSize == info->fileSize){
@@ -145,7 +152,7 @@ void FileTransferManager::resumeTransfer(const QString &fileId)
             return;
         }
 
-        startSendFile(state.fileId,state.filePath,state.friendId);
+        startSendFile(state.fileId,state.filePath,state.friendId,state.fileSize);
         return;
     }
 

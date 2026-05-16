@@ -24,6 +24,7 @@ set(PROJECT_SOURCES
     chat_ui/ChatData.h
     chat_ui/chatmodel.h chat_ui/chatmodel.cpp
     chat_ui/chatdelegate.h chat_ui/chatdelegate.cpp
+    chat_ui/timeformatter.h chat_ui/timeformatter.cpp
     res.qrc
     chat_ui/contactdelegate.h chat_ui/contactdelegate.cpp
     filetransferthread.h filetransferthread.cpp

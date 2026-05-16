@@ -6,12 +6,12 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>189</width>
-    <height>236</height>
+    <width>320</width>
+    <height>420</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Form</string>
+   <string>用户注册</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_3">
    <property name="leftMargin">
@@ -34,9 +34,21 @@
      <property name="frameShadow">
       <enum>QFrame::Raised</enum>
      </property>
-     <layout class="QVBoxLayout" name="verticalLayout_2" stretch="2,3,3,1,1">
+     <layout class="QVBoxLayout" name="verticalLayout_2" stretch="1,0,0,0,0">
       <property name="spacing">
-       <number>12</number>
+       <number>14</number>
+      </property>
+      <property name="leftMargin">
+       <number>20</number>
+      </property>
+      <property name="topMargin">
+       <number>20</number>
+      </property>
+      <property name="rightMargin">
+       <number>20</number>
+      </property>
+      <property name="bottomMargin">
+       <number>20</number>
       </property>
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout" stretch="9,1">
@@ -61,8 +73,8 @@
            <widget class="QPushButton" name="btnClose">
             <property name="maximumSize">
              <size>
-              <width>18</width>
-              <height>18</height>
+              <width>24</width>
+              <height>24</height>
              </size>
             </property>
             <property name="text">
@@ -89,13 +101,25 @@
       </item>
       <item>
        <widget class="QLineEdit" name="editUser">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>40</height>
+         </size>
+        </property>
         <property name="placeholderText">
-         <string>设置用户名 </string>
+         <string>设置用户名</string>
         </property>
        </widget>
       </item>
       <item>
        <widget class="QLineEdit" name="editPwd">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>40</height>
+         </size>
+        </property>
         <property name="echoMode">
          <enum>QLineEdit::Password</enum>
         </property>
@@ -106,6 +130,12 @@
       </item>
       <item>
        <widget class="QLineEdit" name="editConfirm">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>40</height>
+         </size>
+        </property>
         <property name="echoMode">
          <enum>QLineEdit::Password</enum>
         </property>
@@ -118,6 +148,12 @@
        <layout class="QHBoxLayout" name="horizontalLayout_2">
         <item>
          <widget class="QPushButton" name="btnOk">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>42</height>
+           </size>
+          </property>
           <property name="text">
            <string>立即注册</string>
           </property>

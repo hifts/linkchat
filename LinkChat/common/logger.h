@@ -25,7 +25,7 @@ public:
         ERROR = 3
     };
 
-    static void init(const QString &logFileName = "app.log", Level minLevel = DEBUG)
+    static void init(const QString &logFileName = "app.log", Level minLevel = INFO)
     {
         Logger& inst = instance();
         bool wasInitialized = false;
@@ -209,7 +209,7 @@ private:
     }
 
     QString m_logFileName;
-    Level m_minLevel = DEBUG;
+    Level m_minLevel = INFO;
     bool m_initialized = false;
     bool m_stopping = false;
     QMutex m_mutex;

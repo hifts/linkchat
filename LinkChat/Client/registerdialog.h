@@ -18,6 +18,7 @@ public:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 
 private slots:
@@ -32,6 +33,8 @@ private slots:
 private:
     Ui::RegisterDialog *ui;
     QPoint m_dragPosition;
+
+    void applyRoundedMask();
 };
 
 #endif // REGISTERDIALOG_H

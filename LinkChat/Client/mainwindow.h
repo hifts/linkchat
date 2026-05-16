@@ -8,11 +8,15 @@
 #include "transferstatemanager.h"
 #include "reconnecttransfermanager.h"
 
+#include <QAbstractItemView>
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
+#include <QTimer>
+#include <QSplitter>
 #include <tuple>
 
 namespace Ui {
@@ -35,6 +39,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     
     void closeEvent(QCloseEvent *event) override;
 
@@ -75,13 +80,30 @@ private:
     void updateContactListMode(bool isSessionMode);
     
     void updateNewFriendsButtonState();
+    void positionNewFriendsBadge();
+
+    void refreshContactList();
+    void showScrollBarTemporarily(QAbstractItemView *view);
+    void updateEmptyStates();
+    void positionEmptyStateLabels();
+    void createWindowControlButtons();
+    void positionWindowControlButtons();
+    void updateWindowMaximizeButton();
+    void updateMessageInputHeight();
+    ChatMessage makeFileMessage(const QString &fileId, const QString &fileName, const QString &detail, bool mine) const;
+    void appendChatMessage(int chatId, const ChatMessage &msg, bool showImmediately = true);
+    void syncCurrentChatModelToCache();
+    bool replaceFileMessageInList(QList<ChatMessage> &messages, const ChatMessage &msg);
+    bool updateFileMessageStatus(const QString &fileId, const QString &detail);
+    bool updateFileMessageStatusInList(QList<ChatMessage> &messages, const QString &fileId, const QString &detail);
+    QString fileMessageHistoryPath() const;
+    void loadFileMessageHistory();
+    void saveFileMessageHistory() const;
 
 private slots:
     void onFriendListReceived(QList<FriendInfo> list);
 
     void onContactListClicked(QListWidgetItem *item);
-
-    void onContactListPressed(const QModelIndex &index);
 
     void onSigMsgReceived(uint32_t srcId,QByteArray body);
 
@@ -132,7 +154,7 @@ private slots:
     void onFileReceiveFailed(const QString &fileId, const QString &error);
 
     void onGroupListReceived(QList<GroupInfo> list);
-    void onGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body);
+    void onGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body, quint64 messageId);
     void onGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray, quint64>>& history);
     void onCreateGroupResult(bool success, int groupId);
     void onInviteToGroupNotify(int groupId, const QString &groupName, int inviterId, const QString &inviterName);
@@ -146,6 +168,7 @@ private slots:
 
     void onFileResumeReq(const QString &fileId, int senderId);
     void onFileResumeResp(const QString &fileId, bool canResume, int totalChunks, int receivedChunks, const QByteArray &bitmap);
+    void onFileTransferCanceled(const QString &fileId, int senderId, int reason);
 
     void on_btnSend_clicked();
 
@@ -171,6 +194,8 @@ private:
 
     int m_currentFriendId = 0;
     QSet<int> m_friendIds;
+    QSet<int> m_sessionVisibleFriendIds;
+    QList<FriendInfo> m_cachedFriendList;
     int m_currentUserId = 0;
 
     QTimer *m_searchTimer;
@@ -189,14 +214,26 @@ private:
 
     QMap<QString, QString> m_pendingFileTransfers;
     QMap<QString, int> m_pendingFileTransferTargets;
+    QMap<QString, qint64> m_pendingFileTransferSizes;
 
     int m_currentGroupId = 0;
     bool m_isGroupChat = false;
     QMap<int, QList<ChatMessage>> m_groupChatHistory;
     QMap<int, QDateTime> m_groupLastMsgTime;
     QSet<int> m_groupIds;
+    QList<GroupInfo> m_cachedGroupList;
     QString m_currentUserName;
     QList<int> m_pendingGroupMembers;
+    QSplitter *m_contentSplitter = nullptr;
+    QTimer *m_scrollBarHideTimer = nullptr;
+    QPointer<QAbstractItemView> m_activeScrollView;
+    QLabel *m_newFriendsBadge = nullptr;
+    QLabel *m_contactEmptyLabel = nullptr;
+    QLabel *m_friendRequestsEmptyLabel = nullptr;
+    QLabel *m_chatEmptyLabel = nullptr;
+    QPushButton *m_btnWindowMinimize = nullptr;
+    QPushButton *m_btnWindowMaximize = nullptr;
+    QPushButton *m_btnWindowClose = nullptr;
 };
 
 #endif // MAINWINDOW_H

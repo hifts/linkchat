@@ -1,5 +1,7 @@
 ﻿#include "contactdelegate.h"
 
+#include "timeformatter.h"
+
 #include <QPainter>
 #include <QDateTime>
 
@@ -14,6 +16,7 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     QString name = index.data(RoleName).toString();
     int status = index.data(RoleStatus).toInt();
+    int onlineStatus = index.data(RoleOnlineStatus).toInt();
 
     int unreadCount = index.data(RoleUnread).toInt();
     
@@ -34,8 +37,6 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     painter->setPen(Qt::NoPen);
     painter->drawRoundedRect(rect, 5, 5);
 
-    QString fullText = index.data(Qt::DisplayRole).toString();
-
     if (option.state & QStyle::State_Selected) {
         painter->setPen(Qt::white);
     } else {
@@ -48,31 +49,47 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     int rightMargin = 25;
     
     if (isFriend && lastMsgTime.isValid() && showTime) {
-        QString timeText = formatMessageTime(lastMsgTime);
+        QString timeText = formatConversationTime(lastMsgTime);
         
-        QFont timeFont("Microsoft YaHei", 9);
+        QFont timeFont("Microsoft YaHei", 7);
         QFontMetrics timeFm(timeFont);
         int timeWidth = timeFm.horizontalAdvance(timeText);
         
         rightMargin = timeWidth + 25 + 8;
     }
     
-    if (!isFriend) {
-        int btnWidth = 65;
-        int margin = 8;
-        rightMargin = btnWidth + margin + 8;
+    const bool isGroup = status < 0;
+    const int indicatorSize = 7;
+    const int leftPadding = 12;
+    const int textGap = 10;
+    int textLeft = rect.left() + leftPadding;
+
+    if (isFriend && !isGroup) {
+        QRect statusRect(textLeft, rect.center().y() - indicatorSize / 2, indicatorSize, indicatorSize);
+        QColor dotColor = onlineStatus == 1 ? QColor(0x27, 0xae, 0x60) : QColor(0xff, 0x4d, 0x4f);
+
+        painter->setBrush(dotColor);
+        painter->setPen(Qt::NoPen);
+        painter->drawEllipse(statusRect);
+        textLeft = statusRect.right() + textGap;
+
+        if (option.state & QStyle::State_Selected) {
+            painter->setPen(Qt::white);
+        } else {
+            painter->setPen(QColor(0x8e, 0x92, 0x97));
+        }
     }
 
-    QRect textRect = rect.adjusted(12, 0, -rightMargin, 0);
+    QRect textRect(textLeft, rect.top(), rect.right() - rightMargin - textLeft, rect.height());
     
     QFontMetrics fm(painter->font());
-    QString elidedText = fm.elidedText(fullText, Qt::ElideRight, textRect.width());
+    QString elidedText = fm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, elidedText);
 
     if (isFriend && lastMsgTime.isValid() && showTime) {
-        QString timeText = formatMessageTime(lastMsgTime);
+        QString timeText = formatConversationTime(lastMsgTime);
         
-        painter->setFont(QFont("Microsoft YaHei", 9));
+        painter->setFont(QFont("Microsoft YaHei", 7));
         painter->setPen(QColor(0x72, 0x76, 0x7d));
         
         QFontMetrics timeFm(painter->font());
@@ -99,36 +116,6 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         painter->drawText(dotRect, Qt::AlignCenter, countText);
     }
 
-    if (!isFriend) {
-        int btnWidth = 65;
-        int btnHeight = 24;
-        int margin = 8;
-        QRect btnRect(
-            rect.right() - btnWidth - margin,
-            rect.center().y() - btnHeight / 2,
-            btnWidth,
-            btnHeight
-            );
-
-        QColor normalColor(0x58, 0x65, 0xF2);
-
-        QColor hoverColor(0x47, 0x52, 0xc4);
-
-        if (option.state & QStyle::State_MouseOver) {
-            painter->setBrush(hoverColor);
-            painter->setPen(Qt::NoPen);
-        } else {
-            painter->setBrush(normalColor);
-            painter->setPen(Qt::NoPen);
-        }
-
-        painter->drawRoundedRect(btnRect, 4, 4);
-
-        painter->setPen(Qt::white);
-        painter->setFont(QFont("Microsoft YaHei", 8, QFont::Normal));
-        painter->drawText(btnRect, Qt::AlignCenter, "添加好友");
-    }
-
     painter->restore();
 }
 
@@ -137,31 +124,5 @@ QSize ContactDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
     Q_UNUSED(option);
     Q_UNUSED(index);
     return QSize(300, 60);
-}
-
-QString ContactDelegate::formatMessageTime(const QDateTime &msgTime) const
-{
-    if (!msgTime.isValid()) {
-        return "";
-    }
-    
-    QDateTime now = QDateTime::currentDateTime();
-    QDate msgDate = msgTime.date();
-    QDate today = now.date();
-    
-    int daysDiff = msgDate.daysTo(today);
-    
-    if (daysDiff == 0) {
-        return msgTime.toString("HH:mm");
-    } else if (daysDiff == 1) {
-        return "昨天";
-    } else if (daysDiff == 2) {
-        return "前天";
-    } else if (daysDiff < 7) {
-        QStringList weekDays = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
-        return weekDays[msgDate.dayOfWeek() % 7];
-    } else {
-        return msgTime.toString("M月d日");
-    }
 }
 

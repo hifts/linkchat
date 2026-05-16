@@ -124,6 +124,24 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
             }
             break;
         }
+        case MSG_OFFLINE_CHAT_TEXT:{
+            if (body.size() < (int)sizeof(quint64) + 1) {
+                LOG_WARN("Received invalid offline chat message");
+                break;
+            }
+
+            quint64 offlineMsgId = 0;
+            memcpy(&offlineMsgId, body.constData(), sizeof(offlineMsgId));
+            const QByteArray chatBody = body.mid(sizeof(offlineMsgId));
+
+            dispatch(MSG_CHAT_TEXT, srcId, chatBody);
+
+            OfflineMsgAck ack;
+            ack.offlineMsgId = offlineMsgId;
+            QByteArray packet = makePacket(MSG_OFFLINE_MSG_ACK, QByteArray((char*)&ack, sizeof(ack)));
+            m_manager->sendRow(packet);
+            break;
+        }
         case MSG_CHAT_HISTORY_RESP:{
             QDataStream in(body);
             in.setByteOrder(QDataStream::LittleEndian);
@@ -398,11 +416,22 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
         case MSG_GROUP_CHAT_TEXT: {
             if (body.size() < (int)sizeof(GroupChatMessage)) break;
 
-            GroupChatMessage *msg = (GroupChatMessage*)body.data();
+            quint64 messageId = 0;
+            int headerOffset = 0;
+            if (body.size() >= (int)(sizeof(quint64) + sizeof(GroupChatMessage))) {
+                GroupChatMessage candidate;
+                memcpy(&candidate, body.constData() + sizeof(quint64), sizeof(candidate));
+                if (candidate.groupId > 0) {
+                    memcpy(&messageId, body.constData(), sizeof(messageId));
+                    headerOffset = sizeof(quint64);
+                }
+            }
+
+            GroupChatMessage *msg = (GroupChatMessage*)(body.data() + headerOffset);
             int groupId = msg->groupId;
             int senderId = msg->senderId;
             QString senderName = QString::fromUtf8(msg->senderName, safe_strnlen(msg->senderName, 32));
-            QByteArray content = body.mid(sizeof(GroupChatMessage));
+            QByteArray content = body.mid(headerOffset + sizeof(GroupChatMessage));
             
             if (content.isEmpty() || content.size() < 1) {
                 LOG_WARN("Received empty group chat message");
@@ -421,7 +450,7 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
                     LOG_ERROR_FMT("Failed to get group key for group %1", groupId);
                     QByteArray failedBody;
                     failedBody.append(originalSubType);
-                    emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, failedBody);
+                    emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, failedBody, messageId);
                     break;
                 }
                 
@@ -431,7 +460,7 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
                     LOG_ERROR_FMT("Failed to decrypt group message from group %1", groupId);
                     QByteArray failedBody;
                     failedBody.append(originalSubType);
-                    emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, failedBody);
+                    emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, failedBody, messageId);
                     break;
                 }
                 
@@ -439,10 +468,36 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
                 decryptedContent.append(originalSubType);
                 decryptedContent.append(decrypted);
                 
-                emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, decryptedContent);
+                emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, decryptedContent, messageId);
             } else {
-                emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, content);
+                emit m_manager->sigGroupMsgReceived(groupId, senderId, senderName, content, messageId);
             }
+
+            if (messageId > 0) {
+                GroupMsgCursorAck ack;
+                ack.groupId = groupId;
+                ack.messageId = messageId;
+                QByteArray packet = makePacket(MSG_GROUP_MSG_DELIVERED_ACK, QByteArray((char*)&ack, sizeof(ack)));
+                m_manager->sendRow(packet);
+            }
+            break;
+        }
+        case MSG_GROUP_OFFLINE_CHAT_TEXT: {
+            if (body.size() < (int)(sizeof(quint64) + sizeof(GroupChatMessage))) break;
+
+            quint64 offlineMsgId = 0;
+            memcpy(&offlineMsgId, body.constData(), sizeof(offlineMsgId));
+            QByteArray groupBody;
+            quint64 legacyMessageId = 0;
+            groupBody.append(reinterpret_cast<const char*>(&legacyMessageId), sizeof(legacyMessageId));
+            groupBody.append(body.mid(sizeof(offlineMsgId)));
+
+            dispatch(MSG_GROUP_CHAT_TEXT, srcId, groupBody);
+
+            OfflineMsgAck ack;
+            ack.offlineMsgId = offlineMsgId;
+            QByteArray packet = makePacket(MSG_GROUP_OFFLINE_MSG_ACK, QByteArray((char*)&ack, sizeof(ack)));
+            m_manager->sendRow(packet);
             break;
         }
         case MSG_GROUP_CHAT_HISTORY_RESP: {
@@ -558,9 +613,7 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
             if(body.size() < (int)sizeof(FileVerifyReq)){
                 break;
             }
-            FileVerifyReq *req = (FileVerifyReq*)body.data();
-            QString fileId = QString::fromLatin1(req->fileId, safe_strnlen(req->fileId, sizeof(req->fileId)));
-            QString fileMD5 = QString::fromLatin1(req->fileMD5, safe_strnlen(req->fileMD5, sizeof(req->fileMD5)));
+            LOG_WARN("Received unsupported file verify request");
             break;
         }
         case MSG_FILE_VERIFY_RESP: {
@@ -571,6 +624,16 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
             QString fileId = QString::fromLatin1(resp->fileId, safe_strnlen(resp->fileId, sizeof(resp->fileId)));
             bool verified = (resp->verified == 1);
             emit m_manager->sigFileVerifyResp(fileId, verified);
+            break;
+        }
+        case MSG_FILE_TRANSFER_CANCEL: {
+            if(body.size() < (int)sizeof(FileTransferCancel)){
+                break;
+            }
+            FileTransferCancel cancel;
+            memcpy(&cancel, body.constData(), sizeof(cancel));
+            QString fileId = QString::fromLatin1(cancel.fileId, safe_strnlen(cancel.fileId, sizeof(cancel.fileId)));
+            emit m_manager->sigFileTransferCanceled(fileId, srcId, cancel.reason);
             break;
         }
         default:

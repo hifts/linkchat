@@ -6,6 +6,28 @@
 #include <tuple>
 #include "packet.h"
 
+struct OfflineMessage {
+    quint64 id = 0;
+    int senderId = 0;
+    QByteArray content;
+};
+
+struct GroupOfflineMessage {
+    quint64 id = 0;
+    int groupId = 0;
+    int senderId = 0;
+    QString senderName;
+    QByteArray content;
+};
+
+struct GroupPendingMessage {
+    quint64 messageId = 0;
+    int groupId = 0;
+    int senderId = 0;
+    QString senderName;
+    QByteArray content;
+};
+
 class DBManager : public QObject
 {
     Q_OBJECT
@@ -14,8 +36,8 @@ public:
 
     bool connectToDb(const QString& connectionName);
 
-    bool handelRegister(const QString &user,const QString &pwd);
-    bool handelRegister(const QString &user, const QString &passwordHash, const QByteArray &salt);
+    bool handleRegister(const QString &user,const QString &pwd);
+    bool handleRegister(const QString &user, const QString &passwordHash, const QByteArray &salt);
     bool getUserSalt(const QString &user, QByteArray &outSalt);
     bool handleLogin(const QString &user,const QString &pwd,int & outUid);
     bool handleLogin(const QString &user, const QString &passwordHashBase64, int &outUid,
@@ -47,7 +69,9 @@ public:
 
     void saveOfflineMessage(int senderId, int receiverId, const QByteArray &content);
 
-    QList<QPair<int, QByteArray>> getAndClearOfflineMessages(int receiverId);
+    QList<OfflineMessage> getPendingOfflineMessages(int receiverId);
+
+    bool markOfflineMessageDelivered(quint64 messageId, int receiverId);
 
     int createGroup(const QString &groupName, int creatorId);
 
@@ -61,13 +85,23 @@ public:
 
     QList<int> getGroupMemberIds(int groupId);
 
-    void saveGroupMessage(int groupId, int senderId, const QByteArray &content);
+    quint64 saveGroupMessage(int groupId, int senderId, const QByteArray &content);
 
     QList<std::tuple<int, QString, QByteArray, quint64>> getGroupChatHistory(int groupId, int limit = 200);
 
     void saveGroupOfflineMessage(int groupId, int senderId, int receiverId, const QByteArray &content);
 
-    QList<std::tuple<int, int, QString, QByteArray>> getAndClearGroupOfflineMessages(int receiverId);
+    QList<GroupOfflineMessage> getPendingGroupOfflineMessages(int receiverId);
+
+    bool markGroupOfflineMessageDelivered(quint64 messageId, int receiverId);
+
+    QList<GroupPendingMessage> getPendingGroupMessagesByCursor(int receiverId);
+
+    bool markGroupMessageDelivered(int groupId, int userId, quint64 messageId);
+
+    bool markGroupMessageRead(int groupId, int userId, quint64 messageId);
+
+    quint64 getGroupMaxMessageId(int groupId);
 
     QString getUserNameById(int userId);
 

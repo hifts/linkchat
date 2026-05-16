@@ -6,7 +6,10 @@
 
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainterPath>
 #include <QDebug>
+#include <QRegion>
+#include <QResizeEvent>
 
 RegisterDialog::RegisterDialog(QWidget *parent)
     : QDialog(parent)
@@ -17,7 +20,6 @@ RegisterDialog::RegisterDialog(QWidget *parent)
     connect(&NetworkManager::instance(),&NetworkManager::sigRegisterResult,this,&RegisterDialog::onSigRegisterResult);
 
     this->setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
-    this->setAttribute(Qt::WA_TranslucentBackground);
 
     ui->frame->setObjectName("RegisterFrame");
     ui->btnOk->setObjectName("btnOk");
@@ -26,14 +28,14 @@ RegisterDialog::RegisterDialog(QWidget *parent)
     QString style = R"(
     /* 整体背景：保持与登录窗口一致的蓝紫渐变 */
     QDialog {
-        background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #2c3e50, stop:1 #4ca1af);
+        background-color: #2b2f39;
     }
 
     /* 中间卡片：磨砂玻璃 */
     QFrame#RegisterFrame {
-        background-color: rgba(0, 0, 0, 0.6);
-        border-radius: 15px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: #2b2f39;
+        border: 1px solid #3a4050;
+        border-radius: 16px;
     }
 
     /* 标题 */
@@ -48,41 +50,48 @@ RegisterDialog::RegisterDialog(QWidget *parent)
 
     /* 输入框 */
     QLineEdit {
-        background-color: rgba(255, 255, 255, 0.1);
-        border: none;
-        border-radius: 5px;
-        color: #ffffff;
-        padding: 8px 10px;
+        background-color: #222631;
+        border: 1px solid #3a4050;
+        border-radius: 8px;
+        color: #f4f7fb;
+        padding: 10px 12px;
         font-family: "Microsoft YaHei";
         font-size: 14px;
+        min-height: 20px;
+        selection-background-color: #5865f2;
     }
     QLineEdit:focus {
-        background-color: rgba(255, 255, 255, 0.2);
-        border: 1px solid #3498db;
+        background-color: #252b36;
+        border: 1px solid #5865f2;
     }
-    QLineEdit::placeholder { color: #aaaaaa; }
+    QLineEdit::placeholder { color: #8e96a8; }
 
     /* 确认注册按钮 */
     QPushButton#btnOk {
         background-color: #27ae60; /* 注册用绿色，或者用 #3498db 蓝色也可以 */
         color: white;
-        border-radius: 5px;
+        border-radius: 8px;
         font-size: 16px;
         font-family: "Microsoft YaHei";
         font-weight: bold;
-        padding: 8px;
+        padding: 10px;
         border: none;
     }
     QPushButton#btnOk:hover { background-color: #2ecc71; }
-    QPushButton#btnOk:pressed { background-color: #219150; padding-top: 10px; }
+    QPushButton#btnOk:pressed { background-color: #219150; }
+    QPushButton#btnOk:disabled {
+        background-color: #3f5f4c;
+        color: #a8b8ae;
+    }
 
     /* 取消/返回按钮 */
     QPushButton#btnCancel {
         background: transparent;
-        color: #dddddd;
+        color: #e8edf2;
         border: none;
         font-size: 14px;
         font-family: "Microsoft YaHei";
+        padding: 8px;
     }
     QPushButton#btnCancel:hover {
         color: #ffffff;
@@ -91,17 +100,23 @@ RegisterDialog::RegisterDialog(QWidget *parent)
 
     /* 关闭按钮 X */
     QPushButton#btnClose {
-        color: rgba(255, 255, 255, 0.7);
+        color: #b9c0cf;
         background: transparent;
         font-weight: 900;
         font-family: "Arial";
         font-size: 16px;
         border: none;
+        outline: none;
+        border-radius: 4px;
     }
-    QPushButton#btnClose:hover { color: #e74c3c; }
+    QPushButton#btnClose:hover {
+        color: #ffffff;
+        background-color: #e74c3c;
+    }
 )";
 
     this->setStyleSheet(style);
+    applyRoundedMask();
 }
 
 RegisterDialog::~RegisterDialog()
@@ -123,6 +138,19 @@ void RegisterDialog::mouseMoveEvent(QMouseEvent *event)
         move(event->globalPos() - m_dragPosition);
         event->accept();
     }
+}
+
+void RegisterDialog::resizeEvent(QResizeEvent *event)
+{
+    QDialog::resizeEvent(event);
+    applyRoundedMask();
+}
+
+void RegisterDialog::applyRoundedMask()
+{
+    QPainterPath path;
+    path.addRoundedRect(rect(), 16, 16);
+    setMask(QRegion(path.toFillPolygon().toPolygon()));
 }
 
 void RegisterDialog::on_btnCancel_clicked()

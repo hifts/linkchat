@@ -273,7 +273,7 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
     state.filePath = savePath;
     state.tempFilePath = tempPath;
     state.fileSize = fileSize;
-    state.friendId = 0;         // 接收方暂不记录friendId
+    state.friendId = senderId;
     state.totalChunks = info->totalChunks;
     const QList<int> completedChunkKeys = info->receivedChunkMap.keys();
     state.completedChunks = QSet<int>(completedChunkKeys.cbegin(), completedChunkKeys.cend());
@@ -312,197 +312,27 @@ bool FileReceiver::receiveChunk(const QString &fileId, int chunkIndex, const QBy
         }
 
         if(result.completed){
-        try {
-            if(!result.tempPath.isEmpty() && result.tempPath != result.savePath && QFile::exists(result.tempPath)){
-            bool isExecutable = isExecutableLikeFile(result.savePath);
-            if(isExecutable){
-                QThread::msleep(500);
-            } else {
-                QThread::msleep(100);
-            }
-            
-            if(QFile::exists(result.savePath)){
-                if(!QFile::remove(result.savePath)){
-                    LOG_WARN_FMT("Failed to remove existing file: %1, will try to overwrite", result.savePath);
-                }
-            }
-
-            // 尝试重命名临时文件
-            bool renameSuccess = false;
-            try {
-                // 首先尝试直接重命名（最快的方式）
-                if(QFile::rename(result.tempPath, result.savePath)){
-                    renameSuccess = true;
-                    LOG_INFO_FMT("Temp file renamed: %1 -> %2", result.tempPath, result.savePath);
-                } else {
-                    LOG_WARN_FMT("Direct rename failed, trying copy+delete method: %1 -> %2", result.tempPath, result.savePath);
-                    
-                    if(isExecutable){
-                        QThread::msleep(500);
-                    } else {
-                        QThread::msleep(200);
-                    }
-                    
-                    // 尝试复制文件
-                    QFile sourceFile(result.tempPath);
-                    QFile destFile(result.savePath);
-                    
-                    bool copySuccess = false;
-                    try {
-                        if(sourceFile.open(QIODevice::ReadOnly) && destFile.open(QIODevice::WriteOnly)){
-                            const qint64 bufferSize = kFileChunkSize;
-                            qint64 totalBytes = sourceFile.size();
-                            qint64 bytesCopied = 0;
-                            
-                            while(bytesCopied < totalBytes){
-                                QByteArray buffer = sourceFile.read(bufferSize);
-                                if(buffer.isEmpty() && !sourceFile.atEnd()){
-                                    LOG_ERROR("Failed to read from source file during copy");
-                                    break;
-                                }
-                                if(buffer.isEmpty() && sourceFile.atEnd()){
-                                    break;
-                                }
-                                
-                                qint64 written = destFile.write(buffer);
-                                if(written != buffer.size()){
-                                    LOG_ERROR(QString("Failed to write to destination file during copy: expected=%1, written=%2")
-                                             .arg(buffer.size()).arg(written));
-                                    break;
-                                }
-                                
-                                bytesCopied += written;
-                                if(!destFile.flush()){
-                                    LOG_WARN("Failed to flush during file copy, continuing...");
-                                }
-                            }
-                            
-                            destFile.flush();
-                            destFile.close();
-                            sourceFile.close();
-                            
-                            if(bytesCopied == totalBytes){
-                                if(isExecutable){
-                                    QThread::msleep(300);
-                                }
-                                if(QFile::remove(result.tempPath)){
-                                    renameSuccess = true;
-                                    copySuccess = true;
-                                    LOG_INFO_FMT("File copied and temp file removed: %1 -> %2", result.tempPath, result.savePath);
-                                } else {
-                                    LOG_WARN_FMT("File copied but failed to remove temp file: %1", result.tempPath);
-                                    renameSuccess = true;
-                                    copySuccess = true;
-                                }
-                            } else {
-                                LOG_ERROR_FMT("File copy incomplete: copied %1/%2 bytes", bytesCopied, totalBytes);
-                                try {
-                                    destFile.remove();
-                                } catch (...) {
-                                    LOG_ERROR("Failed to remove incomplete destination file");
-                                }
-                            }
-                        } else {
-                            LOG_ERROR_FMT("Failed to open files for copy: source=%1, dest=%2", 
-                                         sourceFile.errorString(), destFile.errorString());
-                            if(sourceFile.isOpen()) sourceFile.close();
-                            if(destFile.isOpen()) destFile.close();
-                        }
-                    } catch (const std::exception& e) {
-                        LOG_ERROR_FMT("Exception during file copy: %1", e.what());
-                        try {
-                            if(sourceFile.isOpen()) sourceFile.close();
-                            if(destFile.isOpen()) destFile.close();
-                            if(QFile::exists(result.savePath) && !copySuccess){
-                                destFile.remove();
-                            }
-                        } catch (...) {
-                        }
-                    } catch (...) {
-                        LOG_ERROR("Unknown exception during file copy");
-                        try {
-                            if(sourceFile.isOpen()) sourceFile.close();
-                            if(destFile.isOpen()) destFile.close();
-                            if(QFile::exists(result.savePath) && !copySuccess){
-                                destFile.remove();
-                            }
-                        } catch (...) {
-                        }
-                    }
-                }
-            } catch (const std::exception& e) {
-                LOG_ERROR_FMT("Exception during file rename: %1", e.what());
-            } catch (...) {
-                LOG_ERROR("Unknown exception during file rename");
-            }
-            
-            if(!renameSuccess){
-                LOG_ERROR_FMT("Failed to rename temp file: %1 -> %2", result.tempPath, result.savePath);
-                try {
-                    if(QFile::exists(result.tempPath)){
-                        LOG_WARN_FMT("Temp file preserved for manual recovery: %1", result.tempPath);
-                    }
-                } catch (...) {
-                    LOG_ERROR("Failed to handle temp file after rename failure");
-                }
-                emit receiveFailed(fileId, "重命名临时文件失败，可能是防病毒软件干扰");
+            QString finalizeError;
+            if (!finalizeTempFile(result, &finalizeError)) {
+                emit receiveFailed(fileId, finalizeError);
                 return false;
             }
-            
-            if(isExecutable){
-                QThread::msleep(500);
-            }
-            }
-        } catch (const std::exception& e) {
-            LOG_ERROR_FMT("Exception during file rename operation: %1", e.what());
-            emit receiveFailed(fileId, QString("文件重命名时发生异常: %1").arg(e.what()));
-            return false;
-        } catch (...) {
-            LOG_ERROR("Unknown exception during file rename operation");
-            emit receiveFailed(fileId, "文件重命名时发生未知异常");
-            return false;
-        }
 
-        if (!result.expectedMD5.isEmpty()) {
-            if (!QFile::exists(result.savePath)) {
-                LOG_ERROR_FMT("File does not exist for MD5 verification: %1", result.savePath);
-                emit receiveFailed(fileId, "文件不存在，无法验证完整性");
+            QString verifyError;
+            if (!verifyCompletedFile(result, &verifyError)) {
+                emit receiveFailed(fileId, verifyError);
                 return false;
             }
-            
-            bool isExecutable = isExecutableLikeFile(result.savePath);
-            if(isExecutable){
-                QThread::msleep(500);
-            } else {
-                QThread::msleep(100);
-            }
-            
+
+            LOG_INFO_FMT("File received completed:%1",result.savePath);
+
             try {
-                bool verified = verifyFileMD5(result.savePath, result.expectedMD5);
-                if (!verified) {
-                    LOG_ERROR_FMT("File MD5 verification failed for: %1", result.savePath);
-                    emit receiveFailed(fileId, "文件完整性验证失败");
-                    return false;
-                }
-                LOG_INFO_FMT("File MD5 verified successfully: %1", result.savePath);
+                emit receiveCompleted(fileId,result.savePath);
             } catch (const std::exception& e) {
-                LOG_ERROR_FMT("Exception during MD5 verification: %1", e.what());
-                LOG_WARN("MD5 verification failed due to exception, but file transfer completed");
+                LOG_ERROR_FMT("Exception in receiveCompleted signal handler: %1", e.what());
             } catch (...) {
-                LOG_ERROR("Unknown exception during MD5 verification");
-                LOG_WARN("MD5 verification failed due to unknown exception, but file transfer completed");
+                LOG_ERROR("Unknown exception in receiveCompleted signal handler");
             }
-        }
-
-        LOG_INFO_FMT("File received completed:%1",result.savePath);
-
-        try {
-            emit receiveCompleted(fileId,result.savePath);
-        } catch (const std::exception& e) {
-            LOG_ERROR_FMT("Exception in receiveCompleted signal handler: %1", e.what());
-        } catch (...) {
-            LOG_ERROR("Unknown exception in receiveCompleted signal handler");
-        }
         }
 
         return true;
@@ -712,6 +542,164 @@ void FileReceiver::cleanupFailedReceive(const QString &fileId, ReceivingFileInfo
 {
     m_receivingFiles.remove(fileId);
     destroyReceivingInfo(info);
+}
+
+bool FileReceiver::finalizeTempFile(const ReceiveChunkResult &result, QString *errorMessage)
+{
+    if (result.tempPath.isEmpty() || result.tempPath == result.savePath || !QFile::exists(result.tempPath)) {
+        return true;
+    }
+
+    const bool isExecutable = isExecutableLikeFile(result.savePath);
+    QThread::msleep(isExecutable ? 500 : 100);
+
+    if (QFile::exists(result.savePath) && !QFile::remove(result.savePath)) {
+        LOG_WARN_FMT("Failed to remove existing file: %1, will try to overwrite", result.savePath);
+    }
+
+    try {
+        if (QFile::rename(result.tempPath, result.savePath)) {
+            LOG_INFO_FMT("Temp file renamed: %1 -> %2", result.tempPath, result.savePath);
+            if (isExecutable) {
+                QThread::msleep(500);
+            }
+            return true;
+        }
+
+        LOG_WARN_FMT("Direct rename failed, trying copy+delete method: %1 -> %2", result.tempPath, result.savePath);
+        QThread::msleep(isExecutable ? 500 : 200);
+
+        QString copyError;
+        if (copyFileSafely(result.tempPath, result.savePath, isExecutable, &copyError)) {
+            if (isExecutable) {
+                QThread::msleep(500);
+            }
+            return true;
+        }
+
+        LOG_ERROR_FMT("Failed to finalize temp file: %1", copyError);
+    } catch (const std::exception& e) {
+        LOG_ERROR_FMT("Exception during file rename operation: %1", e.what());
+        if (errorMessage) *errorMessage = QString("文件重命名时发生异常: %1").arg(e.what());
+        return false;
+    } catch (...) {
+        LOG_ERROR("Unknown exception during file rename operation");
+        if (errorMessage) *errorMessage = "文件重命名时发生未知异常";
+        return false;
+    }
+
+    if (QFile::exists(result.tempPath)) {
+        LOG_WARN_FMT("Temp file preserved for manual recovery: %1", result.tempPath);
+    }
+    if (errorMessage) *errorMessage = "重命名临时文件失败，可能是防病毒软件干扰";
+    return false;
+}
+
+bool FileReceiver::copyFileSafely(const QString &sourcePath, const QString &destPath, bool isExecutable, QString *errorMessage)
+{
+    QFile sourceFile(sourcePath);
+    QFile destFile(destPath);
+
+    try {
+        if (!sourceFile.open(QIODevice::ReadOnly) || !destFile.open(QIODevice::WriteOnly)) {
+            if (errorMessage) {
+                *errorMessage = QString("无法打开复制文件: source=%1, dest=%2")
+                                    .arg(sourceFile.errorString(), destFile.errorString());
+            }
+            if (sourceFile.isOpen()) sourceFile.close();
+            if (destFile.isOpen()) destFile.close();
+            return false;
+        }
+
+        const qint64 totalBytes = sourceFile.size();
+        qint64 bytesCopied = 0;
+        while (bytesCopied < totalBytes) {
+            const QByteArray buffer = sourceFile.read(kFileChunkSize);
+            if (buffer.isEmpty() && !sourceFile.atEnd()) {
+                if (errorMessage) *errorMessage = "复制时读取源文件失败";
+                break;
+            }
+            if (buffer.isEmpty()) {
+                break;
+            }
+
+            const qint64 written = destFile.write(buffer);
+            if (written != buffer.size()) {
+                if (errorMessage) {
+                    *errorMessage = QString("复制时写入目标文件失败: expected=%1, written=%2")
+                                        .arg(buffer.size()).arg(written);
+                }
+                break;
+            }
+
+            bytesCopied += written;
+            if (!destFile.flush()) {
+                LOG_WARN("Failed to flush during file copy, continuing...");
+            }
+        }
+
+        destFile.flush();
+        destFile.close();
+        sourceFile.close();
+
+        if (bytesCopied != totalBytes) {
+            LOG_ERROR_FMT("File copy incomplete: copied %1/%2 bytes", bytesCopied, totalBytes);
+            destFile.remove();
+            return false;
+        }
+
+        if (isExecutable) {
+            QThread::msleep(300);
+        }
+        if (QFile::remove(sourcePath)) {
+            LOG_INFO_FMT("File copied and temp file removed: %1 -> %2", sourcePath, destPath);
+        } else {
+            LOG_WARN_FMT("File copied but failed to remove temp file: %1", sourcePath);
+        }
+        return true;
+    } catch (const std::exception& e) {
+        if (errorMessage) *errorMessage = QString("复制文件时发生异常: %1").arg(e.what());
+    } catch (...) {
+        if (errorMessage) *errorMessage = "复制文件时发生未知异常";
+    }
+
+    if (sourceFile.isOpen()) sourceFile.close();
+    if (destFile.isOpen()) destFile.close();
+    if (QFile::exists(destPath)) {
+        destFile.remove();
+    }
+    return false;
+}
+
+bool FileReceiver::verifyCompletedFile(const ReceiveChunkResult &result, QString *errorMessage)
+{
+    if (result.expectedMD5.isEmpty()) {
+        return true;
+    }
+
+    if (!QFile::exists(result.savePath)) {
+        LOG_ERROR_FMT("File does not exist for MD5 verification: %1", result.savePath);
+        if (errorMessage) *errorMessage = "文件不存在，无法验证完整性";
+        return false;
+    }
+
+    QThread::msleep(isExecutableLikeFile(result.savePath) ? 500 : 100);
+    try {
+        if (!verifyFileMD5(result.savePath, result.expectedMD5)) {
+            LOG_ERROR_FMT("File MD5 verification failed for: %1", result.savePath);
+            if (errorMessage) *errorMessage = "文件完整性验证失败";
+            return false;
+        }
+        LOG_INFO_FMT("File MD5 verified successfully: %1", result.savePath);
+    } catch (const std::exception& e) {
+        LOG_ERROR_FMT("Exception during MD5 verification: %1", e.what());
+        LOG_WARN("MD5 verification failed due to exception, but file transfer completed");
+    } catch (...) {
+        LOG_ERROR("Unknown exception during MD5 verification");
+        LOG_WARN("MD5 verification failed due to unknown exception, but file transfer completed");
+    }
+
+    return true;
 }
 
 ReceivingFileInfo *FileReceiver::getReceivingInfo(const QString &fileId)

@@ -4,6 +4,7 @@
 #include <QMutex>
 #include <QThread>
 #include <QSet>
+#include <QtGlobal>
 
 class FileTransferThread : public QThread
 {
@@ -13,6 +14,7 @@ public:
                                 const QString &fileId,
                                 int friendId,
                                 int currentUserId,
+                                qint64 transferSize,
                                 QObject *parent = nullptr);
 
     ~FileTransferThread();
@@ -49,6 +51,7 @@ private:
     QString m_fileId;
     int m_friendId;
     int m_currentUserId;
+    qint64 m_transferSize;
     quint64 m_chunkSize;
     bool m_stopped;
     bool m_paused;

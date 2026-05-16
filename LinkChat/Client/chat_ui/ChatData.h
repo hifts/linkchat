@@ -8,7 +8,8 @@
 
 enum MsgType {
     TypeText,
-    TypeImage
+    TypeImage,
+    TypeFile
 };
 
 enum EncryptionStatus {
@@ -25,6 +26,7 @@ struct ChatMessage{
     QString avatarPath;
     quint64 timestamp;
     QString senderName;
+    QString fileId;
     bool isGroupChat;
     EncryptionStatus encryptionStatus;
 

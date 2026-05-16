@@ -92,7 +92,7 @@ signals:
 
     void sigGroupMemberListReceived(int groupId, QList<GroupMemberInfo> list);
 
-    void sigGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body);
+    void sigGroupMsgReceived(int groupId, int senderId, const QString &senderName, QByteArray body, quint64 messageId);
 
     void sigGroupChatHistoryReceived(int groupId, const QList<std::tuple<int, QString, QByteArray, quint64>>& history);
 
@@ -105,11 +105,14 @@ signals:
     void sigFileResumeResp(const QString &fileId, bool canResume, int totalChunks, int receivedChunks, const QByteArray &bitmap);
     void sigFileResumeReq(const QString &fileId, int senderId);
     void sigFileVerifyResp(const QString &fileId, bool verified);
+    void sigFileTransferCanceled(const QString &fileId, int senderId, int reason);
 
 public:
     void requestResumeTransfer(const QString &fileId, int friendId);
 
     void requestFileVerify(const QString &fileId, const QString &fileMD5, int friendId);
+
+    void requestCancelTransfer(const QString &fileId, int friendId, quint8 reason = 0);
     
 private:
     QTcpSocket *m_socket;

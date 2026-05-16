@@ -32,6 +32,7 @@ public:
                                            .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
         bool connected = manager.connectToDb(connectionName);
         if (!connected) {
+            LOG_WARN(QString("DB worker reconnect attempt connection=%1").arg(connectionName));
             connected = manager.connectToDb(connectionName);
         }
         if (connected && m_task) {
@@ -85,6 +86,7 @@ bool DbWorkerPool::healthCheck()
                                        .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
     bool ok = manager.connectToDb(connectionName);
     if (!ok) {
+        LOG_WARN(QString("DB health check retry connection=%1").arg(connectionName));
         ok = manager.connectToDb(connectionName);
     }
     if (ok) {

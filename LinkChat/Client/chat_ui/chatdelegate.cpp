@@ -1,5 +1,6 @@
 #include "chatdelegate.h"
 #include "chatmodel.h"
+#include "timeformatter.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -52,7 +53,11 @@ QSize ChatDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelInd
     // 检查是否需要显示时间戳
     int timestampHeight = shouldShowTimestamp(index) ? m_timeHeight : 0;
 
-    if (type == TypeText) {
+    if (type == TypeFile) {
+        int cardHeight = 64;
+        int h = cardHeight + m_margin * 2 + senderNameHeight + timestampHeight;
+        return QSize(0, qMax(h, m_avatarSize + m_margin * 2 + senderNameHeight + timestampHeight));
+    } else if (type == TypeText) {
         QString text = index.data(ChatModel::RoleContent).toString();
         QFontMetrics fm(option.font);
         
@@ -114,9 +119,10 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
             // 往年：显示完整日期
             timeStr = msgDateTime.toString("yyyy-MM-dd hh:mm");
         }
-        
+        timeStr = formatChatTimestamp(msgDateTime);
+
         QFont timeFont = option.font;
-        timeFont.setPointSize(9);
+        timeFont.setPointSize(7);
         painter->setFont(timeFont);
         painter->setPen(QColor(0x999999)); // 灰色
         
@@ -142,7 +148,62 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
     int contentWidth = 0;
     int contentHeight = 0;
 
-    if (msgType == TypeText) {
+    if (msgType == TypeFile) {
+        QString text = index.data(ChatModel::RoleContent).toString();
+        const QStringList parts = text.split('\n');
+        const QString fileName = parts.value(0);
+        const QString detail = parts.value(1);
+
+        const int cardWidth = qMin(calculateMaxBubbleWidth(rect.width()), 280);
+        const int cardHeight = 64;
+        contentRect = isMine
+                          ? QRect(avatarRect.left() - m_margin - cardWidth, rect.top() + m_margin + senderNameHeight + timestampHeight, cardWidth, cardHeight)
+                          : QRect(avatarRect.right() + m_margin, rect.top() + m_margin + senderNameHeight + timestampHeight, cardWidth, cardHeight);
+
+        if (isGroupChat && !isMine && !senderName.isEmpty()) {
+            QFont nameFont = option.font;
+            nameFont.setPointSize(10);
+            painter->setFont(nameFont);
+            painter->setPen(QColor(0x8e9297));
+            QRect nameRect(contentRect.left() + 4, contentRect.top() - senderNameHeight - 2, contentRect.width(), senderNameHeight);
+            painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignBottom, senderName);
+            painter->setFont(option.font);
+        }
+
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(isMine ? QColor(0x5865f2) : QColor(0x40444b));
+        painter->drawRoundedRect(contentRect, 10, 10);
+
+        QRect iconRect(contentRect.left() + 12, contentRect.top() + 14, 36, 36);
+        painter->setBrush(isMine ? QColor(0x7289ff) : QColor(0x5865f2));
+        painter->drawRoundedRect(iconRect, 8, 8);
+
+        painter->setPen(QColor(0xffffff));
+        QFont iconFont = option.font;
+        iconFont.setPointSize(18);
+        iconFont.setBold(true);
+        painter->setFont(iconFont);
+        painter->drawText(iconRect, Qt::AlignCenter, "F");
+
+        QFont titleFont = option.font;
+        titleFont.setPointSize(10);
+        titleFont.setBold(true);
+        painter->setFont(titleFont);
+        painter->setPen(QColor(0xf4f7fb));
+        QRect titleRect(iconRect.right() + 10, contentRect.top() + 12, contentRect.width() - 68, 22);
+        painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter, fileName);
+
+        QFont detailFont = option.font;
+        detailFont.setPointSize(8);
+        detailFont.setBold(false);
+        painter->setFont(detailFont);
+        painter->setPen(isMine ? QColor(0xdde3ff) : QColor(0xb9bbbe));
+        QRect detailRect(iconRect.right() + 10, contentRect.top() + 34, contentRect.width() - 68, 18);
+        painter->drawText(detailRect, Qt::AlignLeft | Qt::AlignVCenter, detail.isEmpty() ? "文件传输" : detail);
+
+        painter->setFont(option.font);
+
+    } else if (msgType == TypeText) {
         QString text = index.data(ChatModel::RoleContent).toString();
         QFontMetrics fm(option.font);
         

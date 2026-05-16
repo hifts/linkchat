@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS t_offline_msg (
     sender_id INT NOT NULL,
     receiver_id INT NOT NULL,
     content LONGBLOB, -- 使用 LONGBLOB 存储大容量消息内容及文件数据
+    delivered TINYINT DEFAULT 0,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_receiver (receiver_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -70,6 +71,8 @@ CREATE TABLE IF NOT EXISTS t_group_members (
     group_id INT NOT NULL,
     user_id INT NOT NULL,
     role TINYINT DEFAULT 0 COMMENT '0=普通成员 1=管理员 2=群主',
+    last_delivered_msg_id BIGINT DEFAULT 0,
+    last_read_msg_id BIGINT DEFAULT 0,
     join_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_group_user (group_id, user_id),
     INDEX idx_group (group_id),
@@ -83,6 +86,7 @@ CREATE TABLE IF NOT EXISTS t_group_messages (
     sender_id INT NOT NULL,
     content LONGBLOB NOT NULL, -- 改为 LONGBLOB 防止超长消息或文件截断
     send_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_group_id (group_id, id),
     INDEX idx_group_time (group_id, send_time),
     INDEX idx_sender (sender_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -94,6 +98,7 @@ CREATE TABLE IF NOT EXISTS t_group_offline_msg (
     sender_id INT NOT NULL,
     receiver_id INT NOT NULL COMMENT '接收者（离线的群成员）',
     content LONGBLOB NOT NULL, -- 改为 LONGBLOB 防止截断
+    delivered TINYINT DEFAULT 0,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_receiver (receiver_id),
     INDEX idx_group (group_id)
@@ -103,10 +108,11 @@ CREATE TABLE IF NOT EXISTS t_group_offline_msg (
 -- 可选：预置测试数据 (仅供首次演示参考使用)
 -- 实际项目中 password 会包含 Hash，此处插入为简单明文以便于直接观察
 -- ==========================================
-INSERT IGNORE INTO t_user (username, password) VALUES 
-('admin', '123456'), 
-('user1', '123456'), 
-('user2', '123456');
+-- Demo password for all users: 123456.
+INSERT IGNORE INTO t_user (username, password, salt) VALUES
+('admin', 'ejFdPCK7V6CmLLNj9BXEx18/nJS4sLqbLcSGAwOWoJc=', 'WQyUYFtYcOv5jNDcbUwJ+Q=='),
+('user1', '+HcVE30yhVxD6+bezse6YWA6168y18JV050GSoRNCeE=', 'YTeNYbL+wsQJgWg9AbslJA=='),
+('user2', 'gU3uXRdOO8ZXo9NKNZn/jCGdEexmHQxhEIYQRC0zIrI=', 'wKVCgvQvRT0ZjslQKgdkrw==');
 
 -- 预置好友关系 (注意：t_friend表关联了外键，此处假设上面三条插入后的自增ID依次为 1,2,3)
 INSERT IGNORE INTO t_friend (user_id, friend_id) VALUES (1, 2), (2, 1);

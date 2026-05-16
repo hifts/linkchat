@@ -3,12 +3,14 @@
 #include "encryptionmanager.h"
 #include "networkmanager.h"
 #include "packet.h"
-#include "registerdialog.h"
 #include "ui_logindialog.h"
 
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainterPath>
+#include <QRegion>
+#include <QResizeEvent>
 #include <cstring>
 
 LoginDialog::LoginDialog(QWidget *parent)
@@ -42,7 +44,6 @@ LoginDialog::LoginDialog(QWidget *parent)
     });
 
     setWindowFlags(Qt::FramelessWindowHint);
-    setAttribute(Qt::WA_TranslucentBackground);
 
     ui->LoginFrame->setObjectName("LoginFrame");
     ui->btnLogin->setObjectName("btnLogin");
@@ -50,16 +51,13 @@ LoginDialog::LoginDialog(QWidget *parent)
 
     const QString style = R"(
     QDialog {
-        background-color: qlineargradient(
-            spread: pad, x1:0, y1:0, x2:1, y2:1,
-            stop:0 #2c3e50, stop:1 #4ca1af
-        );
+        background-color: #2b2f39;
     }
 
     QFrame#LoginFrame {
-        background-color: rgba(0, 0, 0, 0.58);
+        background-color: #2b2f39;
+        border: 1px solid #3a4050;
         border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
     }
 
     QLabel#lblTitle {
@@ -71,29 +69,30 @@ LoginDialog::LoginDialog(QWidget *parent)
     }
 
     QLineEdit {
-        background-color: rgba(255, 255, 255, 0.12);
-        border: 1px solid transparent;
-        border-radius: 6px;
-        color: #ffffff;
+        background-color: #222631;
+        border: 1px solid #3a4050;
+        border-radius: 8px;
+        color: #f4f7fb;
         padding: 10px 12px;
         font-family: "Microsoft YaHei";
         font-size: 14px;
+        selection-background-color: #5865f2;
     }
 
     QLineEdit:focus {
-        background-color: rgba(255, 255, 255, 0.18);
-        border: 1px solid #3498db;
+        background-color: #252b36;
+        border: 1px solid #5865f2;
     }
 
     QLineEdit::placeholder {
-        color: #b8c0cc;
+        color: #8e96a8;
     }
 
     QPushButton#btnLogin {
-        background-color: #3498db;
+        background-color: #5865f2;
         color: white;
         border: none;
-        border-radius: 6px;
+        border-radius: 8px;
         padding: 10px;
         font-family: "Microsoft YaHei";
         font-size: 18px;
@@ -101,11 +100,16 @@ LoginDialog::LoginDialog(QWidget *parent)
     }
 
     QPushButton#btnLogin:hover {
-        background-color: #4aa3df;
+        background-color: #6772f4;
     }
 
     QPushButton#btnLogin:pressed {
-        background-color: #2d7fb8;
+        background-color: #4752c4;
+    }
+
+    QPushButton#btnLogin:disabled {
+        background-color: #444b62;
+        color: #9aa3b8;
     }
 
     QPushButton#btnReg {
@@ -123,9 +127,10 @@ LoginDialog::LoginDialog(QWidget *parent)
     }
 
     QPushButton#btnClose {
-        color: rgba(255, 255, 255, 0.75);
+        color: #b9c0cf;
         background: transparent;
         border: none;
+        outline: none;
         font-weight: 900;
         font-family: "Arial";
         font-size: 16px;
@@ -133,12 +138,13 @@ LoginDialog::LoginDialog(QWidget *parent)
     }
 
     QPushButton#btnClose:hover {
-        color: #e74c3c;
-        background-color: rgba(255, 255, 255, 0.08);
+        color: #ffffff;
+        background-color: #e74c3c;
     }
     )";
 
     setStyleSheet(style);
+    applyRoundedMask();
 }
 
 LoginDialog::~LoginDialog()
@@ -162,10 +168,22 @@ void LoginDialog::mouseMoveEvent(QMouseEvent *event)
     }
 }
 
+void LoginDialog::resizeEvent(QResizeEvent *event)
+{
+    QDialog::resizeEvent(event);
+    applyRoundedMask();
+}
+
+void LoginDialog::applyRoundedMask()
+{
+    QPainterPath path;
+    path.addRoundedRect(rect(), 16, 16);
+    setMask(QRegion(path.toFillPolygon().toPolygon()));
+}
+
 void LoginDialog::on_btnReg_clicked()
 {
-    RegisterDialog regDlg(this);
-    regDlg.exec();
+    done(RegisterRequested);
 }
 
 void LoginDialog::on_btnLogin_clicked()

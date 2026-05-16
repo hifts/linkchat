@@ -39,13 +39,13 @@ bool DBManager::connectToDb(const QString& connectionName)
     m_db.setUserName(dbUser);
     m_db.setPassword(dbPassword);
 
-    LOG_INFO(QString("[DB] Connecting MySQL connection=%1 host=%2 port=%3 database=%4 user=%5 password_empty=%6")
-             .arg(connectionName)
-             .arg(dbHost)
-             .arg(dbPort)
-             .arg(dbName)
-             .arg(dbUser)
-             .arg(dbPassword.isEmpty() ? "true" : "false"));
+    LOG_DEBUG(QString("[DB] Connecting MySQL connection=%1 host=%2 port=%3 database=%4 user=%5 password_empty=%6")
+              .arg(connectionName)
+              .arg(dbHost)
+              .arg(dbPort)
+              .arg(dbName)
+              .arg(dbUser)
+              .arg(dbPassword.isEmpty() ? "true" : "false"));
 
     if (!m_db.open()) {
         const QString errorText = m_db.lastError().text();
@@ -54,11 +54,10 @@ bool DBManager::connectToDb(const QString& connectionName)
         return false;
     }
 
-    qDebug() << "Database connected!";
     return true;
 }
 
-bool DBManager::handelRegister(const QString &user, const QString &pwd)
+bool DBManager::handleRegister(const QString &user, const QString &pwd)
 {
     if(user.isEmpty() || pwd.isEmpty()){
         return false;
@@ -79,7 +78,7 @@ bool DBManager::handelRegister(const QString &user, const QString &pwd)
     return query.exec();
 }
 
-bool DBManager::handelRegister(const QString &user, const QString &passwordHash, const QByteArray &salt)
+bool DBManager::handleRegister(const QString &user, const QString &passwordHash, const QByteArray &salt)
 {
     if(user.isEmpty() || passwordHash.isEmpty() || salt.isEmpty()){
         qWarning() << "[DB] Invalid registration data: empty user, passwordHash, or salt";
@@ -105,7 +104,6 @@ bool DBManager::handelRegister(const QString &user, const QString &passwordHash,
         return false;
     }
 
-    qDebug() << "[DB] User registered successfully:" << user;
     return true;
 }
 
@@ -232,9 +230,10 @@ QList<FriendInfo> DBManager::getFriendList(int uid)
     if(query.exec()){
         while (query.next()) {
             FriendInfo info;
+            memset(&info, 0, sizeof(info));
             info.id = query.value(0).toInt();
             QString name = query.value(1).toString();
-            strncpy(info.userName,name.toStdString().c_str(),32);
+            strncpy(info.userName,name.toUtf8().constData(),sizeof(info.userName) - 1);
             
             QDateTime lastMsgTime = query.value(2).toDateTime();
             info.lastMsgTime = lastMsgTime.isValid() ? lastMsgTime.toSecsSinceEpoch() : 0;
@@ -278,11 +277,11 @@ QList<FriendInfo> DBManager::searchUsers(const QString &keyword, int currentId)
     if(query.exec()){
         while(query.next()){
             FriendInfo info;
+            memset(&info, 0, sizeof(info));
             info.id = query.value(0).toInt();
             QString name = query.value(1).toString();
 
-            memset(info.userName,0,32);
-            strncpy(info.userName,name.toStdString().c_str(),32);
+            strncpy(info.userName,name.toUtf8().constData(),sizeof(info.userName) - 1);
 
             info.status = 0;
 
@@ -383,14 +382,11 @@ bool DBManager::deleteFriend(int userId, int friendId)
         
         if (!query.exec()) {
             qWarning() << "Failed to delete friend request records:" << query.lastError().text();
-        } else {
-            qDebug() << "Deleted friend request records between" << userId << "and" << friendId;
         }
     }
 
     if (success) {
         m_db.commit();
-        qDebug() << "Successfully deleted friendship between" << userId << "and" << friendId;
         return true;
     } else {
         m_db.rollback();
@@ -526,30 +522,40 @@ void DBManager::saveOfflineMessage(int senderId, int receiverId, const QByteArra
     }
 }
 
-QList<QPair<int, QByteArray>> DBManager::getAndClearOfflineMessages(int receiverId)
+QList<OfflineMessage> DBManager::getPendingOfflineMessages(int receiverId)
 {
-    QList<QPair<int,QByteArray>> offlineMsgList;
+    QList<OfflineMessage> offlineMsgList;
     QSqlQuery query(m_db);
 
-    query.prepare("select sender_id,content from t_offline_msg where receiver_id = ? ORDER BY create_time ASC");
+    query.prepare("select id,sender_id,content from t_offline_msg where receiver_id = ? and delivered = 0 ORDER BY create_time ASC");
     query.addBindValue(receiverId);
 
     if(query.exec()){
         while (query.next()) {
-            int senderId = query.value(0).toInt();
-            QByteArray content = query.value(1).toByteArray();
-            offlineMsgList.append(qMakePair(senderId,content));
+            OfflineMessage msg;
+            msg.id = query.value(0).toULongLong();
+            msg.senderId = query.value(1).toInt();
+            msg.content = query.value(2).toByteArray();
+            offlineMsgList.append(msg);
         }
     }
 
-    if(!offlineMsgList.isEmpty()){
-        QSqlQuery delQuery(m_db);
-        delQuery.prepare("delete from t_offline_msg where receiver_id = ?");
-        delQuery.addBindValue(receiverId);
-        delQuery.exec();
+    return offlineMsgList;
+}
+
+bool DBManager::markOfflineMessageDelivered(quint64 messageId, int receiverId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE t_offline_msg SET delivered = 1 WHERE id = ? AND receiver_id = ?");
+    query.addBindValue(messageId);
+    query.addBindValue(receiverId);
+
+    if (!query.exec()) {
+        qCritical() << "Failed to mark offline msg delivered:" << query.lastError().text();
+        return false;
     }
 
-    return offlineMsgList;
+    return query.numRowsAffected() > 0;
 }
 
 
@@ -579,9 +585,15 @@ int DBManager::createGroup(const QString &groupName, int creatorId)
     int groupId = query.lastInsertId().toInt();
 
     query.clear();
-    query.prepare("INSERT INTO t_group_members (group_id, user_id, role) VALUES (?, ?, 2)");
+    query.prepare(
+        "INSERT INTO t_group_members "
+        "(group_id, user_id, role, last_delivered_msg_id, last_read_msg_id) "
+        "VALUES (?, ?, 2, ?, ?)"
+    );
     query.addBindValue(groupId);
     query.addBindValue(creatorId);
+    query.addBindValue(0);
+    query.addBindValue(0);
 
     if (!query.exec()) {
         qCritical() << "Add creator to group failed:" << query.lastError().text();
@@ -667,10 +679,17 @@ QList<GroupMemberInfo> DBManager::getGroupMembers(int groupId)
 bool DBManager::addGroupMember(int groupId, int userId, int role)
 {
     QSqlQuery query(m_db);
-    query.prepare("INSERT IGNORE INTO t_group_members (group_id, user_id, role) VALUES (?, ?, ?)");
+    const quint64 initialCursor = getGroupMaxMessageId(groupId);
+    query.prepare(
+        "INSERT IGNORE INTO t_group_members "
+        "(group_id, user_id, role, last_delivered_msg_id, last_read_msg_id) "
+        "VALUES (?, ?, ?, ?, ?)"
+    );
     query.addBindValue(groupId);
     query.addBindValue(userId);
     query.addBindValue(role);
+    query.addBindValue(initialCursor);
+    query.addBindValue(initialCursor);
 
     if (!query.exec()) {
         qCritical() << "Add group member failed:" << query.lastError().text();
@@ -711,7 +730,7 @@ QList<int> DBManager::getGroupMemberIds(int groupId)
     return list;
 }
 
-void DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &content)
+quint64 DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &content)
 {
     QSqlQuery query(m_db);
     query.prepare("INSERT INTO t_group_messages (group_id, sender_id, content) VALUES (?, ?, ?)");
@@ -721,7 +740,10 @@ void DBManager::saveGroupMessage(int groupId, int senderId, const QByteArray &co
 
     if (!query.exec()) {
         qCritical() << "Save group message failed:" << query.lastError().text();
+        return 0;
     }
+
+    return query.lastInsertId().toULongLong();
 }
 
 QList<std::tuple<int, QString, QByteArray, quint64>> DBManager::getGroupChatHistory(int groupId, int limit)
@@ -767,38 +789,135 @@ void DBManager::saveGroupOfflineMessage(int groupId, int senderId, int receiverI
     }
 }
 
-QList<std::tuple<int, int, QString, QByteArray>> DBManager::getAndClearGroupOfflineMessages(int receiverId)
+QList<GroupOfflineMessage> DBManager::getPendingGroupOfflineMessages(int receiverId)
 {
-    QList<std::tuple<int, int, QString, QByteArray>> list;
+    QList<GroupOfflineMessage> list;
     QSqlQuery query(m_db);
 
     query.prepare(
-        "SELECT o.group_id, o.sender_id, u.username, o.content "
+        "SELECT o.id, o.group_id, o.sender_id, u.username, o.content "
         "FROM t_group_offline_msg o "
         "JOIN t_user u ON o.sender_id = u.id "
-        "WHERE o.receiver_id = ? "
+        "WHERE o.receiver_id = ? AND o.delivered = 0 "
         "ORDER BY o.create_time ASC"
     );
     query.addBindValue(receiverId);
 
     if (query.exec()) {
         while (query.next()) {
-            int groupId = query.value(0).toInt();
-            int senderId = query.value(1).toInt();
-            QString senderName = query.value(2).toString();
-            QByteArray content = query.value(3).toByteArray();
-            list.append(std::make_tuple(groupId, senderId, senderName, content));
+            GroupOfflineMessage msg;
+            msg.id = query.value(0).toULongLong();
+            msg.groupId = query.value(1).toInt();
+            msg.senderId = query.value(2).toInt();
+            msg.senderName = query.value(3).toString();
+            msg.content = query.value(4).toByteArray();
+            list.append(msg);
         }
     }
 
-    if (!list.isEmpty()) {
-        QSqlQuery delQuery(m_db);
-        delQuery.prepare("DELETE FROM t_group_offline_msg WHERE receiver_id = ?");
-        delQuery.addBindValue(receiverId);
-        delQuery.exec();
+    return list;
+}
+
+bool DBManager::markGroupOfflineMessageDelivered(quint64 messageId, int receiverId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE t_group_offline_msg SET delivered = 1 WHERE id = ? AND receiver_id = ?");
+    query.addBindValue(messageId);
+    query.addBindValue(receiverId);
+
+    if (!query.exec()) {
+        qCritical() << "Failed to mark group offline msg delivered:" << query.lastError().text();
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
+}
+
+QList<GroupPendingMessage> DBManager::getPendingGroupMessagesByCursor(int receiverId)
+{
+    QList<GroupPendingMessage> list;
+    QSqlQuery query(m_db);
+
+    query.prepare(
+        "SELECT m.id, m.group_id, m.sender_id, u.username, m.content "
+        "FROM t_group_members gm "
+        "JOIN t_group_messages m "
+        "  ON m.group_id = gm.group_id "
+        " AND m.id > gm.last_delivered_msg_id "
+        "JOIN t_user u ON u.id = m.sender_id "
+        "WHERE gm.user_id = ? "
+        "ORDER BY m.id ASC"
+    );
+    query.addBindValue(receiverId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            GroupPendingMessage msg;
+            msg.messageId = query.value(0).toULongLong();
+            msg.groupId = query.value(1).toInt();
+            msg.senderId = query.value(2).toInt();
+            msg.senderName = query.value(3).toString();
+            msg.content = query.value(4).toByteArray();
+            list.append(msg);
+        }
+    } else {
+        qCritical() << "Get pending group messages by cursor failed:" << query.lastError().text();
     }
 
     return list;
+}
+
+bool DBManager::markGroupMessageDelivered(int groupId, int userId, quint64 messageId)
+{
+    QSqlQuery query(m_db);
+    query.prepare(
+        "UPDATE t_group_members "
+        "SET last_delivered_msg_id = GREATEST(last_delivered_msg_id, ?) "
+        "WHERE group_id = ? AND user_id = ?"
+    );
+    query.addBindValue(messageId);
+    query.addBindValue(groupId);
+    query.addBindValue(userId);
+
+    if (!query.exec()) {
+        qCritical() << "Mark group message delivered failed:" << query.lastError().text();
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
+}
+
+bool DBManager::markGroupMessageRead(int groupId, int userId, quint64 messageId)
+{
+    QSqlQuery query(m_db);
+    query.prepare(
+        "UPDATE t_group_members "
+        "SET last_read_msg_id = GREATEST(last_read_msg_id, ?) "
+        "WHERE group_id = ? AND user_id = ?"
+    );
+    query.addBindValue(messageId);
+    query.addBindValue(groupId);
+    query.addBindValue(userId);
+
+    if (!query.exec()) {
+        qCritical() << "Mark group message read failed:" << query.lastError().text();
+        return false;
+    }
+
+    return query.numRowsAffected() > 0;
+}
+
+quint64 DBManager::getGroupMaxMessageId(int groupId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("SELECT COALESCE(MAX(id), 0) FROM t_group_messages WHERE group_id = ?");
+    query.addBindValue(groupId);
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toULongLong();
+    }
+
+    return 0;
 }
 
 QString DBManager::getUserNameById(int userId)

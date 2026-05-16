@@ -16,8 +16,6 @@
 Q_DECLARE_METATYPE(QSharedPointer<QList<int>>)
 
 namespace {
-constexpr uint32_t MAX_NORMAL_PACKET_LEN = 1u * 1024u * 1024u;
-constexpr uint32_t MAX_FILE_PACKET_LEN = 1u * 1024u * 1024u;
 constexpr int MAX_SOCKET_BUFFER_LEN = 2 * 1024 * 1024;
 constexpr qint64 MAX_PENDING_WRITE_BYTES = 4 * 1024 * 1024;
 }
@@ -73,7 +71,7 @@ void ClientSocket::onReadyRead()
         return;
     }
 
-    PacketCodec codec(MAX_NORMAL_PACKET_LEN, MAX_FILE_PACKET_LEN);
+    PacketCodec codec(DEFAULT_MAX_NORMAL_PACKET_LEN, DEFAULT_MAX_FILE_PACKET_LEN);
     ServerMessageRouter router(this);
 
     while (true) {
@@ -172,10 +170,13 @@ void ClientSocket::notifyFriends(int status)
         });
 }
 
-void ClientSocket::pushOfflineMsgs(const QList<QPair<int, QByteArray> > &offlineMsgs)
+void ClientSocket::pushOfflineMsgs(const QList<OfflineMessage> &offlineMsgs)
 {
-    for (const auto &msgPair : offlineMsgs) {
-        sendPacket(MSG_CHAT_TEXT, msgPair.second, msgPair.first, m_uid);
+    for (const auto &msg : offlineMsgs) {
+        QByteArray body;
+        body.append(reinterpret_cast<const char*>(&msg.id), sizeof(msg.id));
+        body.append(msg.content);
+        sendPacket(MSG_OFFLINE_CHAT_TEXT, body, msg.senderId, m_uid);
     }
 }
 
@@ -190,18 +191,38 @@ void ClientSocket::pushFriendRequests(const QList<QPair<int, QString> > &pending
     }
 }
 
-void ClientSocket::pushGroupOfflineMsgs(const QList<std::tuple<int, int, QString, QByteArray>>& offlineMsgs)
+void ClientSocket::pushGroupOfflineMsgs(const QList<GroupOfflineMessage>& offlineMsgs)
 {
     for (const auto &msg : offlineMsgs) {
         GroupChatMessage header;
-        header.groupId = std::get<0>(msg);
-        header.senderId = std::get<1>(msg);
-        strncpy(header.senderName, std::get<2>(msg).toUtf8().constData(), 31);
+        memset(&header, 0, sizeof(header));
+        header.groupId = msg.groupId;
+        header.senderId = msg.senderId;
+        strncpy(header.senderName, msg.senderName.toUtf8().constData(), 31);
         header.senderName[31] = '\0';
 
         QByteArray body;
+        body.append(reinterpret_cast<const char*>(&msg.id), sizeof(msg.id));
         body.append((char*)&header, sizeof(GroupChatMessage));
-        body.append(std::get<3>(msg));
+        body.append(msg.content);
+        sendPacket(MSG_GROUP_OFFLINE_CHAT_TEXT, body, header.senderId, m_uid);
+    }
+}
+
+void ClientSocket::pushPendingGroupMsgs(const QList<GroupPendingMessage>& pendingMsgs)
+{
+    for (const auto &msg : pendingMsgs) {
+        GroupChatMessage header;
+        memset(&header, 0, sizeof(header));
+        header.groupId = msg.groupId;
+        header.senderId = msg.senderId;
+        strncpy(header.senderName, msg.senderName.toUtf8().constData(), 31);
+        header.senderName[31] = '\0';
+
+        QByteArray body;
+        body.append(reinterpret_cast<const char*>(&msg.messageId), sizeof(msg.messageId));
+        body.append(reinterpret_cast<const char*>(&header), sizeof(header));
+        body.append(msg.content);
         sendPacket(MSG_GROUP_CHAT_TEXT, body, header.senderId, m_uid);
     }
 }

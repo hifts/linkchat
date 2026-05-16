@@ -54,8 +54,15 @@ enum MessageType{
     MSG_LEAVE_GROUP_RESP,            // 主动退出群组响应
     MSG_GROUP_CHAT_TEXT,             // 群聊消息 (包含文本、图片等)
     MSG_GROUP_CHAT_HISTORY_REQ,      // 群聊历史记录请求
-    MSG_GROUP_CHAT_HISTORY_RESP      // 群聊历史记录响应
+    MSG_GROUP_CHAT_HISTORY_RESP,     // 群聊历史记录响应
+    MSG_OFFLINE_CHAT_TEXT,           // 私聊离线消息投递
+    MSG_GROUP_OFFLINE_CHAT_TEXT,     // 群聊离线消息投递
+    MSG_OFFLINE_MSG_ACK,             // 私聊离线消息投递确认
+    MSG_GROUP_OFFLINE_MSG_ACK        // 群聊离线消息投递确认
 };
+
+constexpr uint32_t MSG_GROUP_MSG_DELIVERED_ACK = static_cast<uint32_t>(MSG_GROUP_OFFLINE_MSG_ACK) + 1;
+constexpr uint32_t MSG_GROUP_MSG_READ_ACK = static_cast<uint32_t>(MSG_GROUP_OFFLINE_MSG_ACK) + 2;
 
 constexpr uint32_t PDU_MAGIC = 0xABCD1234;
 
@@ -250,6 +257,15 @@ struct FileVerifyReq {
 struct FileVerifyResp {
     char fileId[64];
     quint8 verified;
+};
+
+struct OfflineMsgAck {
+    quint64 offlineMsgId;
+};
+
+struct GroupMsgCursorAck {
+    int groupId;
+    quint64 messageId;
 };
 
 // ==================== 群组与多人聊天结构体 ====================

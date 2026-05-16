@@ -1,6 +1,7 @@
 ﻿#ifndef CLIENTSOCKET_H
 #define CLIENTSOCKET_H
 
+#include "dbmanager.h"
 #include "packet.h"
 #include <QTcpSocket>
 #include <tuple>
@@ -40,11 +41,13 @@ private:
 
     void notifyFriends(int status);
 
-    void pushOfflineMsgs(const QList<QPair<int, QByteArray>> &offlineMsgs);
+    void pushOfflineMsgs(const QList<OfflineMessage> &offlineMsgs);
 
     void pushFriendRequests(const QList<QPair<int, QString>> &pendingReqs);
 
-    void pushGroupOfflineMsgs(const QList<std::tuple<int, int, QString, QByteArray>>& offlineMsgs);
+    void pushGroupOfflineMsgs(const QList<GroupOfflineMessage>& offlineMsgs);
+
+    void pushPendingGroupMsgs(const QList<GroupPendingMessage>& pendingMsgs);
 };
 
 #endif // CLIENTSOCKET_H

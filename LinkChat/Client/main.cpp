@@ -1,5 +1,6 @@
 ﻿#include "networkmanager.h"
 #include "logindialog.h"
+#include "registerdialog.h"
 #include "mainwindow.h"
 #include "logger.h"
 #include "heartbeatmanager.h"
@@ -24,7 +25,7 @@ int main(int argc, char *argv[])
     const QString logFilePath = QDir(appDir).filePath("client.log");
     const QString configFilePath = QDir(appDir).filePath("client_config.json");
 
-    Logger::init(logFilePath, Logger::DEBUG);
+    Logger::init(logFilePath, Logger::INFO);
     LOG_INFO(QString("Client startup directory: %1").arg(appDir));
     LOG_INFO(QString("Client config path: %1").arg(configFilePath));
 
@@ -66,36 +67,53 @@ int main(int argc, char *argv[])
     int serverPort = ConfigManager::instance().getInt(
         ConfigKeys::Client::SERVER_PORT, 8080);
 
-    LoginDialog loginDlg;
-    LOG_INFO("Login dialog created");
-
     QTimer::singleShot(0, &a, [&netMgr, serverAddress, serverPort]() {
         LOG_INFO(QString("Connecting to server %1:%2").arg(serverAddress).arg(serverPort));
         netMgr.connectToServer(serverAddress, serverPort);
     });
 
-    if(loginDlg.exec() == QDialog::Accepted){
-        LOG_INFO(QString("User login success, UID: %1, username: %2")
-                 .arg(loginDlg.loginUid())
-                 .arg(loginDlg.loginUserName()));
-        
-        reconnectMgr->saveLoginInfo(loginDlg.loginUserName(),loginDlg.loginCredentialHash());
+    const bool shouldQuitOnLastWindowClosed = a.quitOnLastWindowClosed();
+    a.setQuitOnLastWindowClosed(false);
 
-        MainWindow w;
-        w.setCurrentUserId(loginDlg.loginUid());
-        w.setCurrentUserName(loginDlg.loginUserName());
-        
-        NetworkManager::instance().setCurrentUserId(loginDlg.loginUid());
-        
-        FileTransferManager::instance().setCurrentUserId(loginDlg.loginUid());
-        
-        FileReceiver::instance().setCurrentUserId(loginDlg.loginUid());
-        
-        w.show();
+    while (true) {
+        LoginDialog loginDlg;
+        LOG_INFO("Login dialog created");
 
-        return a.exec();
-    }else{
+        const int loginResult = loginDlg.exec();
+
+        if (loginResult == LoginDialog::RegisterRequested) {
+            RegisterDialog registerDlg;
+            registerDlg.move(loginDlg.frameGeometry().center()
+                             - QPoint(registerDlg.width() / 2, registerDlg.height() / 2));
+            registerDlg.exec();
+            continue;
+        }
+
+        if(loginResult == QDialog::Accepted){
+            LOG_INFO(QString("User login success, UID: %1, username: %2")
+                     .arg(loginDlg.loginUid())
+                     .arg(loginDlg.loginUserName()));
+
+            reconnectMgr->saveLoginInfo(loginDlg.loginUserName(),loginDlg.loginCredentialHash());
+
+            MainWindow w;
+            w.setCurrentUserId(loginDlg.loginUid());
+            w.setCurrentUserName(loginDlg.loginUserName());
+
+            NetworkManager::instance().setCurrentUserId(loginDlg.loginUid());
+
+            FileTransferManager::instance().setCurrentUserId(loginDlg.loginUid());
+
+            FileReceiver::instance().setCurrentUserId(loginDlg.loginUid());
+
+            w.show();
+            a.setQuitOnLastWindowClosed(shouldQuitOnLastWindowClosed);
+
+            return a.exec();
+        }
+
         LOG_INFO("User canceled login, exiting");
+        a.setQuitOnLastWindowClosed(shouldQuitOnLastWindowClosed);
         netMgr.disconnectFromServer();
         return 0;
     }
