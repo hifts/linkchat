@@ -18,7 +18,16 @@ public:
         RoleSenderName,
         RoleIsGroupChat,
         RoleEncryptionStatus,
-        RoleTimestamp
+        RoleTimestamp,
+        RoleFileId,
+        RoleFileName,
+        RoleFileDetail,
+        RoleFilePath,
+        RoleFileSavePath,
+        RoleFilePeerId,
+        RoleFileProgress,
+        RoleFileTransferredBytes,
+        RoleFileTotalBytes
     };
 
     explicit ChatModel(QObject *parent = nullptr);

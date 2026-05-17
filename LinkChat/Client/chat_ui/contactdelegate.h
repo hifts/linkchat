@@ -14,7 +14,8 @@ public:
         RoleIsFriend = Qt::UserRole + 3,
         RoleLastMsgTime = Qt::UserRole + 4,
         RoleShowTime = Qt::UserRole + 5,
-        RoleOnlineStatus = Qt::UserRole + 6
+        RoleOnlineStatus = Qt::UserRole + 6,
+        RoleLastMessagePreview = Qt::UserRole + 7
     };
 
     explicit ContactDelegate(QObject *parent = nullptr);

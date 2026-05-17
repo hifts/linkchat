@@ -67,7 +67,7 @@ signals:
 
     void sigFriendStatusChanged(int uid, int status);
 
-    void sigSearchUserResult(QList<FriendInfo> list);
+    void sigSearchUserResult(QList<FriendInfo> list, quint32 requestId = 0, bool reset = true, bool hasMore = false);
 
     void sigFriendRequestReceived(int uid,const QString name);
 

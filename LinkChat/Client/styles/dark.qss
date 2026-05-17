@@ -1,0 +1,395 @@
+﻿    /* 全局设置：字体与去边框 */
+    QWidget {
+        font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+        font-size: 14px;
+        border: none;
+    }
+
+    QWidget#MainWindow {
+        background-color: #1e2128;
+    }
+
+    QSplitter#contentSplitter::handle {
+        background-color: #1e2128;
+    }
+
+    QSplitter#contentSplitter::handle:hover {
+        background-color: #5865f2;
+    }
+
+    /* 左侧侧边栏：最深色 (#202225) */
+    QWidget#sideBar {
+        background-color: #202225;
+        border: none; /* 确保自身无边框 */
+    }
+
+    /* 侧边栏通用按钮 */
+    QWidget#sideBar QPushButton {
+        background-color: transparent;
+        color: #b9bbbe;       /* 浅灰色文字 */
+        border: none;         /* 去掉按钮边框 */
+        outline: none;
+        border-radius: 10px;
+        padding: 10px 5px;    /* 上下10px，左右缩减为5px，给文字留空 */
+        margin: 5px 8px;      /* 按钮左右留点空隙，不要贴边 */
+        font-weight: bold;
+        font-size: 10px;
+        text-align: left;     /* 文字靠左，这样图标和文字会排得整齐 */
+    }
+
+    QWidget#sideBar QPushButton:hover {
+        background-color: #4f545c; /* 悬停深灰 */
+        color: #ffffff;
+    }
+
+    QWidget#sideBar QPushButton:checked {
+        background-color: #5865F2; /* 选中时变成 Discord 蓝 */
+        color: #ffffff;
+    }
+
+    /* 头像按钮特殊处理：做大一点，居中 */
+    QWidget#sideBar QPushButton#btnAvatar {
+        background-color: #5865F2;
+        color: white;
+        border-radius: 18px;   /* 稍微方一点的圆角 */
+        font-size: 18px;       /* 头像的 emoji 可以大一点 */
+        margin: 15px 10px 20px 10px; /* 上 右 下 左 (下方拉开距离) */
+        min-height: 36px;
+        text-align: center;    /* 头像居中显示 */
+        padding: 0px;          /* 头像不需要内边距 */
+    }
+
+    QWidget#sideBar QPushButton#btnLogout {
+        background-color: transparent;
+        color: #b9bbbe;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 5px;
+        margin: 8px 8px 14px 8px;
+        font-weight: bold;
+        font-size: 10px;
+        text-align: center;
+    }
+
+    QWidget#sideBar QPushButton#btnLogout:hover {
+        background-color: #ed4245;
+        color: #ffffff;
+    }
+
+    QWidget#sideBar QPushButton#btnLogout:pressed {
+        background-color: #c93235;
+        color: #ffffff;
+    }
+
+    QLabel#newFriendsBadge {
+        background-color: #ff4d4f;
+        border-radius: 2px;
+    }
+
+    QLabel#emptyStateLabel {
+        color: #72767d;
+        background-color: transparent;
+        font-size: 13px;
+        font-weight: normal;
+    }
+
+    QPushButton#btnWindowMinimize,
+    QPushButton#btnWindowMaximize,
+    QPushButton#btnWindowClose {
+        background-color: #2f3136;
+        color: #b9bbbe;
+        border: none;
+        border-radius: 4px;
+        font-size: 15px;
+        font-weight: bold;
+        padding: 0px;
+    }
+    QPushButton#btnWindowMinimize:hover,
+    QPushButton#btnWindowMaximize:hover {
+        background-color: #4f545c;
+        color: #ffffff;
+    }
+    QPushButton#btnWindowMinimize:pressed,
+    QPushButton#btnWindowMaximize:pressed,
+    QPushButton#btnWindowClose:pressed {
+        background-color: #5865f2;
+        color: #ffffff;
+    }
+    QPushButton#btnWindowClose:hover {
+        background-color: #ed4245;
+        color: #ffffff;
+    }
+
+    /* 中间列表区：中灰色 (#2f3136) */
+    QWidget#listArea{
+        background-color: #2f3136;
+    }
+
+    /* 新朋友列表专用样式 */
+    QListWidget#friendRequestsList {
+        background-color: #2f3136;
+        border: none;
+        outline: none;
+    }
+    QListWidget#friendRequestsList::item {
+        background-color: transparent;
+        border-bottom: 1px solid #3f4147; /* 给每一行加个底部分割线，更好看 */
+        padding: 0px; /* 因为我们在 Widget 里处理了 margin */
+    }
+    QListWidget#friendRequestsList::item:hover {
+        background-color: #35373c; /* 悬停时整个条目变亮一点 */
+    }
+    QListWidget#friendRequestsList::item:selected {
+        background-color: transparent; /* 禁止选中变蓝，因为只有按钮是交互点 */
+    }
+
+    QLabel#newFriendTitle {
+        background-color: #2f3136;
+        color: #72767d;
+        font-size: 14px;
+        font-weight: bold;
+    }
+
+    /* 搜索框：更黑一点，圆角 */
+    QLineEdit#searchEdit {
+        background-color: #202225;
+        color: #dcddde;
+        border: none;
+        border-radius: 4px;
+        padding: 8px;
+        margin: 10px 10px 0px 10px; /* 上右下左 */
+        font-size: 13px;
+    }
+    QLineEdit#searchEdit:focus {
+        background-color: #202225; /* 保持颜色 */
+        color: white;
+    }
+
+    /* 加号按钮样式 */
+    QPushButton#btnGroup {
+        background-color: #202225; /* 与搜索框同色或稍浅 */
+        color: #b9bbbe;
+        border-radius: 4px;
+        font-size: 20px;
+        font-weight: bold;
+        margin: 10px 10px 0px 5px; /* 上 右 下 左 */
+    }
+    QPushButton#btnGroup:hover {
+        background-color: #5865F2; /* 悬停变蓝 */
+        color: white;
+    }
+
+    /* 列表控件 */
+    QListWidget {
+        background-color: transparent;
+        outline: none; /* 去掉选中时的虚线框 */
+    }
+    QListWidget::item {
+        color: #8e9297; /* 默认未选中颜色 */
+        padding: 10px;
+        border-radius: 5px; /* 列表项也要圆角 */
+        margin: 1px 10px; /* 列表项左右留空，做成悬浮卡片感 */
+    }
+    QListWidget::item:hover {
+        background-color: #35373c;
+        color: #dcddde;
+    }
+    QListWidget::item:selected {
+        background-color: #393c43;
+        color: #ffffff;
+    }
+
+    /* 右侧聊天区：最亮色 (#36393f) */
+    QWidget#chatArea {
+        background-color: #36393f;
+    }
+
+    /* 顶部标题栏 */
+    QLabel#lblChatTitle {
+        color: #72767d;
+        font-size: 14px;
+        font-weight: bold;
+        border-bottom: 1px solid #26272d; /* 分割线 */
+        padding: 0px;
+    }
+
+    /* 聊天记录列表 */
+    QListView#chatList {
+        background-color: transparent;
+        border: none;
+        padding: 10px;
+    }
+
+    /* 好友列表滚动条 */
+    QListWidget#contactList QScrollBar:vertical {
+        background-color: transparent;
+        width: 8px;
+        margin: 4px 2px 4px 0px;
+        border: none;
+    }
+    QListWidget#contactList QScrollBar::handle:vertical {
+        background-color: transparent;
+        min-height: 12px;
+        border-radius: 4px;
+        margin: 0px 1px;
+    }
+    QListWidget#contactList QScrollBar[active="true"]::handle:vertical {
+        background-color: #5865f2;
+    }
+    QListWidget#contactList QScrollBar::handle:vertical:hover {
+        background-color: #4f545c;
+    }
+    QListWidget#contactList QScrollBar::handle:vertical:pressed {
+        background-color: #5865F2;
+    }
+    QListWidget#contactList QScrollBar::add-line:vertical,
+    QListWidget#contactList QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QListWidget#contactList QScrollBar::add-page:vertical,
+    QListWidget#contactList QScrollBar::sub-page:vertical {
+        background-color: transparent;
+        border: none;
+    }
+
+    /* 聊天消息列表滚动条 */
+    QListView#chatList QScrollBar:vertical {
+        background-color: transparent;
+        width: 8px;
+        margin: 4px 2px 4px 0px;
+        border: none;
+    }
+    QListView#chatList QScrollBar::handle:vertical {
+        background-color: transparent;
+        min-height: 12px;
+        border-radius: 4px;
+        margin: 0px 1px;
+    }
+    QListView#chatList QScrollBar[active="true"]::handle:vertical {
+        background-color: #5865f2;
+    }
+    QListView#chatList QScrollBar::handle:vertical:hover {
+        background-color: #4f545c;
+    }
+    QListView#chatList QScrollBar::handle:vertical:pressed {
+        background-color: #5865F2;
+    }
+    QListView#chatList QScrollBar::add-line:vertical,
+    QListView#chatList QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QListView#chatList QScrollBar::add-page:vertical,
+    QListView#chatList QScrollBar::sub-page:vertical {
+        background-color: transparent;
+        border: none;
+    }
+
+    /* 新朋友列表滚动条 */
+    QListWidget#friendRequestsList QScrollBar:vertical {
+        background-color: transparent;
+        width: 8px;
+        margin: 4px 2px 4px 0px;
+        border: none;
+    }
+    QListWidget#friendRequestsList QScrollBar::handle:vertical {
+        background-color: transparent;
+        min-height: 12px;
+        border-radius: 4px;
+        margin: 0px 1px;
+    }
+    QListWidget#friendRequestsList QScrollBar[active="true"]::handle:vertical {
+        background-color: #5865f2;
+    }
+    QListWidget#friendRequestsList QScrollBar::handle:vertical:hover {
+        background-color: #4f545c;
+    }
+    QListWidget#friendRequestsList QScrollBar::handle:vertical:pressed {
+        background-color: #5865F2;
+    }
+    QListWidget#friendRequestsList QScrollBar::add-line:vertical,
+    QListWidget#friendRequestsList QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QListWidget#friendRequestsList QScrollBar::add-page:vertical,
+    QListWidget#friendRequestsList QScrollBar::sub-page:vertical {
+        background-color: transparent;
+        border: none;
+    }
+
+    /* 底部输入容器 */
+    QWidget#inputWidget {
+        background-color: #36393f; /* 与背景同色 */
+        padding: 10px;
+    }
+
+    /* 输入框 QTextEdit */
+    QTextEdit#msgEdit {
+        background-color: #40444b; /* 输入框背景深灰 */
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 14px;
+    }
+    QTextEdit#msgEdit QScrollBar:vertical {
+        background-color: transparent;
+        width: 6px;
+        margin: 8px 2px 8px 0px;
+        border: none;
+    }
+    QTextEdit#msgEdit QScrollBar::handle:vertical {
+        background-color: #5865f2;
+        min-height: 16px;
+        border-radius: 3px;
+    }
+    QTextEdit#msgEdit QScrollBar::add-line:vertical,
+    QTextEdit#msgEdit QScrollBar::sub-line:vertical {
+        height: 0px;
+        background: none;
+    }
+    QTextEdit#msgEdit QScrollBar::add-page:vertical,
+    QTextEdit#msgEdit QScrollBar::sub-page:vertical {
+        background-color: transparent;
+        border: none;
+    }
+
+    /* 发送按钮 */
+    QPushButton#btnSend {
+        background-color: #5865F2; /* 品牌蓝 */
+        color: white;
+        border: none;
+        border-radius: 7px;
+        min-width: 64px;
+        max-width: 64px;
+        min-height: 36px;
+        max-height: 36px;
+        padding: 0px;
+        font-weight: bold;
+        font-size: 13px;
+        margin-left: 6px;
+    }
+    QPushButton#btnSend:hover {
+        background-color: #4752c4;
+        font-weight: bold;
+    }
+
+    QPushButton#btnImage {
+        color: #72767d;
+        border-radius: 20px;
+    }
+    QPushButton#btnImage:hover {
+        background-color: #40444b;
+        font-weight: bold;
+    }
+
+    QPushButton#btnFile {
+        color: #72767d;
+        border-radius: 20px;
+    }
+    QPushButton#btnFile:hover {
+        background-color: #40444b;
+        font-weight: bold;
+    }

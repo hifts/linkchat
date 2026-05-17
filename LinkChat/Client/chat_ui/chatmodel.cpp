@@ -39,6 +39,24 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         return msg.encryptionStatus;
     case RoleTimestamp:
         return msg.timestamp;
+    case RoleFileId:
+        return msg.fileId;
+    case RoleFileName:
+        return msg.fileName;
+    case RoleFileDetail:
+        return msg.fileDetail;
+    case RoleFilePath:
+        return msg.filePath;
+    case RoleFileSavePath:
+        return msg.fileSavePath;
+    case RoleFilePeerId:
+        return msg.filePeerId;
+    case RoleFileProgress:
+        return msg.fileProgress;
+    case RoleFileTransferredBytes:
+        return msg.fileTransferredBytes;
+    case RoleFileTotalBytes:
+        return msg.fileTotalBytes;
     default:
         return QVariant();
     }

@@ -67,15 +67,17 @@ int main(int argc, char *argv[])
     int serverPort = ConfigManager::instance().getInt(
         ConfigKeys::Client::SERVER_PORT, 8080);
 
-    QTimer::singleShot(0, &a, [&netMgr, serverAddress, serverPort]() {
-        LOG_INFO(QString("Connecting to server %1:%2").arg(serverAddress).arg(serverPort));
-        netMgr.connectToServer(serverAddress, serverPort);
-    });
-
     const bool shouldQuitOnLastWindowClosed = a.quitOnLastWindowClosed();
     a.setQuitOnLastWindowClosed(false);
 
     while (true) {
+        QTimer::singleShot(0, &a, [&netMgr, serverAddress, serverPort]() {
+            if (!netMgr.isConnected()) {
+                LOG_INFO(QString("Connecting to server %1:%2").arg(serverAddress).arg(serverPort));
+                netMgr.connectToServer(serverAddress, serverPort);
+            }
+        });
+
         LoginDialog loginDlg;
         LOG_INFO("Login dialog created");
 
@@ -96,9 +98,10 @@ int main(int argc, char *argv[])
 
             reconnectMgr->saveLoginInfo(loginDlg.loginUserName(),loginDlg.loginCredentialHash());
 
-            MainWindow w;
-            w.setCurrentUserId(loginDlg.loginUid());
-            w.setCurrentUserName(loginDlg.loginUserName());
+            MainWindow *w = new MainWindow;
+            w->setAttribute(Qt::WA_DeleteOnClose);
+            w->setCurrentUserId(loginDlg.loginUid());
+            w->setCurrentUserName(loginDlg.loginUserName());
 
             NetworkManager::instance().setCurrentUserId(loginDlg.loginUid());
 
@@ -106,10 +109,24 @@ int main(int argc, char *argv[])
 
             FileReceiver::instance().setCurrentUserId(loginDlg.loginUid());
 
-            w.show();
+            bool logoutRequested = false;
+            QObject::connect(w, &MainWindow::logoutRequested, &a, [&logoutRequested, w]() {
+                logoutRequested = true;
+                w->close();
+            });
+
+            w->show();
             a.setQuitOnLastWindowClosed(shouldQuitOnLastWindowClosed);
 
-            return a.exec();
+            a.exec();
+
+            if (logoutRequested) {
+                a.setQuitOnLastWindowClosed(false);
+                reconnectMgr->setAutoConnect(autoReconnect);
+                continue;
+            }
+
+            return 0;
         }
 
         LOG_INFO("User canceled login, exiting");

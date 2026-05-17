@@ -51,9 +51,28 @@
        <number>20</number>
       </property>
       <item>
-       <layout class="QHBoxLayout" name="horizontalLayout" stretch="9,1">
+       <layout class="QHBoxLayout" name="horizontalLayout" stretch="1,0,1">
+        <item>
+         <spacer name="horizontalSpacerTitleLeft">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>24</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
         <item>
          <widget class="QLabel" name="label">
+          <property name="minimumSize">
+           <size>
+            <width>200</width>
+            <height>0</height>
+           </size>
+          </property>
           <property name="font">
            <font>
             <pointsize>18</pointsize>
@@ -63,7 +82,7 @@
            <string>新用户注册</string>
           </property>
           <property name="alignment">
-           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           <set>Qt::AlignCenter</set>
           </property>
          </widget>
         </item>

@@ -203,6 +203,24 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
             break;
         }
         case MSG_SEARCH_USER_RESP:{
+            if (body.size() >= (int)sizeof(SearchUserBatchHeader)) {
+                SearchUserBatchHeader header;
+                memcpy(&header, body.constData(), sizeof(header));
+                const qsizetype expectedSize = sizeof(SearchUserBatchHeader) + header.count * sizeof(FriendInfo);
+                if (header.count <= 1000 && body.size() >= expectedSize) {
+                    QList<FriendInfo> list;
+                    const char *ptr = body.constData() + sizeof(SearchUserBatchHeader);
+                    for (quint32 i = 0; i < header.count; ++i) {
+                        FriendInfo info;
+                        memcpy(&info, ptr, sizeof(FriendInfo));
+                        list.append(info);
+                        ptr += sizeof(FriendInfo);
+                    }
+                    emit m_manager->sigSearchUserResult(list, header.requestId, header.offset == 0, header.hasMore != 0);
+                    break;
+                }
+            }
+
             if (body.size() < (int)sizeof(int)) break;
             const char *ptr = body.constData();
             int count = 0;
@@ -220,7 +238,7 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
                 ptr += sizeof(FriendInfo);
             }
 
-            emit m_manager->sigSearchUserResult(list);
+            emit m_manager->sigSearchUserResult(list, 0, true, false);
             break;
         }
         case MSG_ADD_FRIEND_NOTIFY:{

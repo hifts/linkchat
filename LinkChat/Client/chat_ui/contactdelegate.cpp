@@ -17,6 +17,7 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     QString name = index.data(RoleName).toString();
     int status = index.data(RoleStatus).toInt();
     int onlineStatus = index.data(RoleOnlineStatus).toInt();
+    QString preview = index.data(RoleLastMessagePreview).toString();
 
     int unreadCount = index.data(RoleUnread).toInt();
     
@@ -80,11 +81,21 @@ void ContactDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         }
     }
 
-    QRect textRect(textLeft, rect.top(), rect.right() - rightMargin - textLeft, rect.height());
+    QRect nameRect(textLeft, preview.isEmpty() ? rect.top() : rect.top() + 8, rect.right() - rightMargin - textLeft, preview.isEmpty() ? rect.height() : 22);
     
     QFontMetrics fm(painter->font());
-    QString elidedText = fm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
-    painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, elidedText);
+    QString elidedText = fm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, nameRect.width());
+    painter->drawText(nameRect, preview.isEmpty() ? (Qt::AlignVCenter | Qt::AlignLeft) : (Qt::AlignLeft | Qt::AlignVCenter), elidedText);
+
+    if (!preview.isEmpty()) {
+        QFont previewFont("Microsoft YaHei", 8);
+        painter->setFont(previewFont);
+        painter->setPen(QColor(0x72, 0x76, 0x7d));
+        QFontMetrics previewFm(previewFont);
+        QRect previewRect(textLeft, rect.top() + 31, rect.right() - rightMargin - textLeft, 18);
+        painter->drawText(previewRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          previewFm.elidedText(preview, Qt::ElideRight, previewRect.width()));
+    }
 
     if (isFriend && lastMsgTime.isValid() && showTime) {
         QString timeText = formatConversationTime(lastMsgTime);

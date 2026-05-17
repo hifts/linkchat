@@ -34,6 +34,8 @@ Q_DECLARE_METATYPE(QSharedPointer<GroupMemberInfoList>)
 Q_DECLARE_METATYPE(QSharedPointer<GroupHistoryList>)
 
 namespace {
+constexpr int kSearchUserBatchSize = 100;
+
 QString fixedUtf8(const char* data, qsizetype maxLen)
 {
     if (!data || maxLen <= 0) {
@@ -278,28 +280,39 @@ void ServerMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, uint32_t de
         memcpy(&req, bodyData.constData(), sizeof(req));
         const QString keyword = fixedUtf8(req.keyword, sizeof(req.keyword)).trimmed();
         const int currentUid = socket->m_uid;
+        const quint32 requestId = qHash(keyword) ^ static_cast<quint32>(currentUid);
         DbWorkerPool::instance().enqueue(
             [keyword, currentUid](DBManager& db) {
                 return QVariant::fromValue(QSharedPointer<QList<FriendInfo>>::create(db.searchUsers(keyword, currentUid)));
             },
             socket,
-            [socket](const QVariant& result) {
+            [socket, requestId](const QVariant& result) {
                 const auto listPtr = result.value<QSharedPointer<QList<FriendInfo>>>();
                 QList<FriendInfo> users = listPtr ? *listPtr : QList<FriendInfo>();
                 for (auto& info : users) {
                     info.status = TcpServer::instance().isOnline(info.id) ? 1 : 0;
                 }
-                const int count = users.size();
-                QByteArray body;
-                body.resize(sizeof(int) + sizeof(FriendInfo) * count);
-                char* ptr = body.data();
-                memcpy(ptr, &count, sizeof(int));
-                ptr += sizeof(int);
-                for (const auto& info : users) {
-                    memcpy(ptr, &info, sizeof(FriendInfo));
-                    ptr += sizeof(FriendInfo);
+
+                for (int offset = 0; offset < users.size() || (offset == 0 && users.isEmpty()); offset += kSearchUserBatchSize) {
+                    const int count = qMin(kSearchUserBatchSize, users.size() - offset);
+                    SearchUserBatchHeader header;
+                    memset(&header, 0, sizeof(header));
+                    header.requestId = requestId;
+                    header.offset = offset;
+                    header.count = count;
+                    header.hasMore = (offset + count) < users.size() ? 1 : 0;
+
+                    QByteArray body;
+                    body.resize(sizeof(SearchUserBatchHeader) + sizeof(FriendInfo) * count);
+                    char* ptr = body.data();
+                    memcpy(ptr, &header, sizeof(header));
+                    ptr += sizeof(header);
+                    for (int i = 0; i < count; ++i) {
+                        memcpy(ptr, &users[offset + i], sizeof(FriendInfo));
+                        ptr += sizeof(FriendInfo);
+                    }
+                    socket->sendPacket(MSG_SEARCH_USER_RESP, body);
                 }
-                socket->sendPacket(MSG_SEARCH_USER_RESP, body);
             });
         break;
     }

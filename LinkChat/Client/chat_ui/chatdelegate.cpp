@@ -48,13 +48,13 @@ QSize ChatDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelInd
     MsgType type = (MsgType)index.data(ChatModel::RoleType).toInt();
     bool isGroupChat = index.data(ChatModel::RoleIsGroupChat).toBool();
     bool isMine = index.data(ChatModel::RoleIsMine).toBool();
-    int senderNameHeight = (isGroupChat && !isMine) ? 18 : 0; // 群聊非自己的消息显示发送者用户名
+    int senderNameHeight = isGroupChat ? 18 : 0; // 群聊非自己的消息显示发送者用户名
     
     // 检查是否需要显示时间戳
     int timestampHeight = shouldShowTimestamp(index) ? m_timeHeight : 0;
 
     if (type == TypeFile) {
-        int cardHeight = 64;
+        int cardHeight = 78;
         int h = cardHeight + m_margin * 2 + senderNameHeight + timestampHeight;
         return QSize(0, qMax(h, m_avatarSize + m_margin * 2 + senderNameHeight + timestampHeight));
     } else if (type == TypeText) {
@@ -83,11 +83,15 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
     QString avatarPath = index.data(ChatModel::RoleAvatar).toString();
     bool isGroupChat = index.data(ChatModel::RoleIsGroupChat).toBool();
     QString senderName = index.data(ChatModel::RoleSenderName).toString();
+    if (isGroupChat && senderName.trimmed().isEmpty()) {
+        senderName = isMine ? QString::fromUtf8("\xE6\x88\x91")
+                            : QString::fromUtf8("\xE6\x9C\xAA\xE7\x9F\xA5\xE7\x94\xA8\xE6\x88\xB7");
+    }
     int encryptionStatus = index.data(ChatModel::RoleEncryptionStatus).toInt();
     quint64 timestamp = index.data(ChatModel::RoleTimestamp).toULongLong();
 
     QRect rect = option.rect;
-    int senderNameHeight = (isGroupChat && !isMine) ? 18 : 0; // 群聊非自己的消息显示发送者用户名
+    int senderNameHeight = isGroupChat ? 18 : 0; // 群聊非自己的消息显示发送者用户名
     
     // 检查是否需要显示时间戳
     int timestampHeight = 0;
@@ -150,23 +154,28 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
 
     if (msgType == TypeFile) {
         QString text = index.data(ChatModel::RoleContent).toString();
-        const QStringList parts = text.split('\n');
-        const QString fileName = parts.value(0);
-        const QString detail = parts.value(1);
+        QString fileName = index.data(ChatModel::RoleFileName).toString();
+        QString detail = index.data(ChatModel::RoleFileDetail).toString();
+        if (fileName.isEmpty()) {
+            const QStringList parts = text.split('\n');
+            fileName = parts.value(0);
+            detail = parts.value(1);
+        }
+        const int progress = index.data(ChatModel::RoleFileProgress).toInt();
 
         const int cardWidth = qMin(calculateMaxBubbleWidth(rect.width()), 280);
-        const int cardHeight = 64;
+        const int cardHeight = 78;
         contentRect = isMine
                           ? QRect(avatarRect.left() - m_margin - cardWidth, rect.top() + m_margin + senderNameHeight + timestampHeight, cardWidth, cardHeight)
                           : QRect(avatarRect.right() + m_margin, rect.top() + m_margin + senderNameHeight + timestampHeight, cardWidth, cardHeight);
 
-        if (isGroupChat && !isMine && !senderName.isEmpty()) {
+        if (isGroupChat && !senderName.isEmpty()) {
             QFont nameFont = option.font;
             nameFont.setPointSize(10);
             painter->setFont(nameFont);
             painter->setPen(QColor(0x8e9297));
             QRect nameRect(contentRect.left() + 4, contentRect.top() - senderNameHeight - 2, contentRect.width(), senderNameHeight);
-            painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignBottom, senderName);
+            painter->drawText(nameRect, (isMine ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignBottom, senderName);
             painter->setFont(option.font);
         }
 
@@ -201,6 +210,18 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
         QRect detailRect(iconRect.right() + 10, contentRect.top() + 34, contentRect.width() - 68, 18);
         painter->drawText(detailRect, Qt::AlignLeft | Qt::AlignVCenter, detail.isEmpty() ? "文件传输" : detail);
 
+        if (progress >= 0 && progress < 100) {
+            const QRect progressBg(contentRect.left() + 12, contentRect.bottom() - 16, contentRect.width() - 24, 5);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(isMine ? QColor(0x4752c4) : QColor(0x2f3136));
+            painter->drawRoundedRect(progressBg, 3, 3);
+
+            QRect progressFg = progressBg;
+            progressFg.setWidth(qMax(4, progressBg.width() * progress / 100));
+            painter->setBrush(isMine ? QColor(0xdde3ff) : QColor(0x57f287));
+            painter->drawRoundedRect(progressFg, 3, 3);
+        }
+
         painter->setFont(option.font);
 
     } else if (msgType == TypeText) {
@@ -221,7 +242,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
                           : QRect(avatarRect.right() + m_margin, rect.top() + m_margin + senderNameHeight + timestampHeight, contentWidth, contentHeight);
 
         // 群聊非自己的消息：在气泡上方显示发送者用户名
-        if (isGroupChat && !isMine && !senderName.isEmpty()) {
+        if (isGroupChat && !senderName.isEmpty()) {
             QFont nameFont = option.font;
             nameFont.setPointSize(10);  // 字体稍大一点
             nameFont.setBold(false);
@@ -229,7 +250,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
             painter->setPen(QColor(0x8e9297)); // 浅灰色
             // 与气泡保持 4px 的间距
             QRect nameRect(contentRect.left() + 4, contentRect.top() - senderNameHeight - 2, contentRect.width(), senderNameHeight);
-            painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignBottom, senderName);
+            painter->drawText(nameRect, (isMine ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignBottom, senderName);
             painter->setFont(option.font);
         }
 
@@ -280,8 +301,19 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
                 imgW = image.width() * m_maxImageHeight / image.height();
 
             QRect bubbleRect = isMine
-                                   ? QRect(avatarRect.left() - m_margin - imgW - 10, rect.top() + m_margin + timestampHeight, imgW + 10, imgH + 10)
-                                   : QRect(avatarRect.right() + m_margin, rect.top() + m_margin + timestampHeight, imgW + 10, imgH + 10);
+                                   ? QRect(avatarRect.left() - m_margin - imgW - 10, rect.top() + m_margin + senderNameHeight + timestampHeight, imgW + 10, imgH + 10)
+                                   : QRect(avatarRect.right() + m_margin, rect.top() + m_margin + senderNameHeight + timestampHeight, imgW + 10, imgH + 10);
+
+            if (isGroupChat && !senderName.isEmpty()) {
+                QFont nameFont = option.font;
+                nameFont.setPointSize(10);
+                nameFont.setBold(false);
+                painter->setFont(nameFont);
+                painter->setPen(QColor(0x8e9297));
+                QRect nameRect(bubbleRect.left() + 4, bubbleRect.top() - senderNameHeight - 2, bubbleRect.width(), senderNameHeight);
+                painter->drawText(nameRect, (isMine ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignBottom, senderName);
+                painter->setFont(option.font);
+            }
 
             // 轻微圆角 + 浅边框
             // painter->setBrush(Qt::white);

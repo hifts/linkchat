@@ -165,6 +165,13 @@ struct SearchReq {
     char keyword[32];
 };
 
+struct SearchUserBatchHeader {
+    quint32 requestId;
+    quint32 offset;
+    quint32 count;
+    quint8 hasMore;
+};
+
 // 好友在线状态更新通知：服务端推送好友上下线变化
 struct FriendStatusChange {
     int uid;

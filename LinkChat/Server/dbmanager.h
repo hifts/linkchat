@@ -47,7 +47,7 @@ public:
 
     QList<int> getFriendIds(int uid);
 
-    QList<FriendInfo> searchUsers(const QString &keyword,int currentId);
+    QList<FriendInfo> searchUsers(const QString &keyword, int currentId);
 
     bool addFriend(int userId, int friendId);
 

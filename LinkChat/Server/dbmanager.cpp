@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QSqlQuery>
 #include <QDateTime>
+#include <algorithm>
 
 DBManager::DBManager(QObject *parent)
     : QObject{parent}
@@ -263,16 +264,32 @@ QList<int> DBManager::getFriendIds(int uid)
 QList<FriendInfo> DBManager::searchUsers(const QString &keyword, int currentId)
 {
     QList<FriendInfo> list;
-    if(keyword.isEmpty()){
+    const QString normalizedKeyword = keyword.trimmed();
+    if(normalizedKeyword.isEmpty()){
         return list;
     }
 
     QSqlQuery query(m_db);
-    QString sql = "select id,username from t_user where username like ? and id != ?";
+    const bool isNumericId = std::all_of(normalizedKeyword.cbegin(), normalizedKeyword.cend(), [](const QChar &ch) {
+        return ch.isDigit();
+    });
+
+    QString sql =
+        "select id, username from t_user "
+        "where id != ? and (username like ? ";
+    if (isNumericId) {
+        sql += "or id = ? ";
+    }
+    sql += ") order by case when username = ? then 0 when username like ? then 1 else 2 end, id";
 
     query.prepare(sql);
-    query.addBindValue("%" + keyword + "%");
     query.addBindValue(currentId);
+    query.addBindValue(normalizedKeyword + "%");
+    if (isNumericId) {
+        query.addBindValue(normalizedKeyword.toInt());
+    }
+    query.addBindValue(normalizedKeyword);
+    query.addBindValue(normalizedKeyword + "%");
 
     if(query.exec()){
         while(query.next()){

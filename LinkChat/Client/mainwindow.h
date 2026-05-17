@@ -34,6 +34,9 @@ public:
     void setCurrentUserId(int newCurrentUserId);
     void setCurrentUserName(const QString &name);
 
+signals:
+    void logoutRequested();
+
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
@@ -76,6 +79,7 @@ private:
     void checkIncompleteTransfers();
     
     void updateContactLastMsgTime(int friendId, const QDateTime &time);
+    void updateContactLastMessagePreview(int chatId, const QString &preview, const QDateTime &time);
     
     void updateContactListMode(bool isSessionMode);
     
@@ -90,12 +94,19 @@ private:
     void positionWindowControlButtons();
     void updateWindowMaximizeButton();
     void updateMessageInputHeight();
+    QString conversationPreviewForMessage(const ChatMessage &msg) const;
     ChatMessage makeFileMessage(const QString &fileId, const QString &fileName, const QString &detail, bool mine) const;
     void appendChatMessage(int chatId, const ChatMessage &msg, bool showImmediately = true);
     void syncCurrentChatModelToCache();
+    void normalizeMessageList(QList<ChatMessage> &messages) const;
+    ChatMessage *findFileMessage(const QString &fileId, int *chatId = nullptr);
+    ChatMessage currentFileMessageAt(const QModelIndex &index) const;
+    QString fileMessageOpenPath(const ChatMessage &msg) const;
+    QString formatTransferDetail(const QString &action, int percent, qint64 done, qint64 total) const;
     bool replaceFileMessageInList(QList<ChatMessage> &messages, const ChatMessage &msg);
     bool updateFileMessageStatus(const QString &fileId, const QString &detail);
-    bool updateFileMessageStatusInList(QList<ChatMessage> &messages, const QString &fileId, const QString &detail);
+    bool updateFileMessageProgress(const QString &fileId, const QString &detail, int progress, qint64 done = 0, qint64 total = 0, const QString &savePath = QString());
+    bool updateFileMessageStatusInList(QList<ChatMessage> &messages, const QString &fileId, const QString &detail, int progress = -1, qint64 done = 0, qint64 total = 0, const QString &savePath = QString());
     QString fileMessageHistoryPath() const;
     void loadFileMessageHistory();
     void saveFileMessageHistory() const;
@@ -115,7 +126,7 @@ private slots:
 
     void onSearchTimerTimeout();
 
-    void onSigSearchUserResult(QList<FriendInfo> list);
+    void onSigSearchUserResult(QList<FriendInfo> list, quint32 requestId = 0, bool reset = true, bool hasMore = false);
 
     void onSigFriendRequestReceived(int uid,const QString name);
 
@@ -126,6 +137,8 @@ private slots:
     void onSigDeleteFriendResponse(int result, int targetId);
 
     void onContactListContextMenu(const QPoint &pos);
+    void onChatListContextMenu(const QPoint &pos);
+    void onChatListDoubleClicked(const QModelIndex &index);
 
     void onSigLeaveGroupResponse(int result, int groupId);
 
@@ -183,6 +196,7 @@ private slots:
     void on_btnFile_clicked();
 
     void on_btnGroup_clicked();
+    void onLogoutRequested();
 
 private:
     Ui::MainWindow *ui;
@@ -215,6 +229,8 @@ private:
     QMap<QString, QString> m_pendingFileTransfers;
     QMap<QString, int> m_pendingFileTransferTargets;
     QMap<QString, qint64> m_pendingFileTransferSizes;
+    QString m_lastSearchKeyword;
+    quint32 m_activeSearchRequestId = 0;
 
     int m_currentGroupId = 0;
     bool m_isGroupChat = false;
@@ -234,6 +250,7 @@ private:
     QPushButton *m_btnWindowMinimize = nullptr;
     QPushButton *m_btnWindowMaximize = nullptr;
     QPushButton *m_btnWindowClose = nullptr;
+    QPushButton *m_btnLogout = nullptr;
 };
 
 #endif // MAINWINDOW_H

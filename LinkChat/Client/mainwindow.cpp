@@ -20,6 +20,8 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QPushButton>
 #include <QSplitter>
 #include <QScrollBar>
@@ -114,6 +116,21 @@ void MainWindow::closeEvent(QCloseEvent *event)
     
     // 接受关闭事件
     event->accept();
+}
+
+void MainWindow::onLogoutRequested()
+{
+    if (QMessageBox::question(this, "退出登录", "确定要退出当前账号并返回登录页吗？",
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
+
+    syncCurrentChatModelToCache();
+    saveFileMessageHistory();
+    EncryptionManager::instance().clearKeyCache();
+    NetworkManager::instance().disconnectFromServer();
+    emit logoutRequested();
 }
 
 void MainWindow::mousePressEvent(QMouseEvent *event)
@@ -399,6 +416,17 @@ void MainWindow::initUI()
     navButtonGroup->addButton(ui->btnContact);
     navButtonGroup->addButton(ui->btnNewFriends);
 
+    ui->btnAvatar->setText("我");
+    ui->btnAvatar->setToolTip("当前账号");
+    ui->btnAvatar->setCheckable(true);
+
+    m_btnLogout = new QPushButton("退出登录", ui->sideBar);
+    m_btnLogout->setObjectName("btnLogout");
+    m_btnLogout->setToolTip("退出当前账号并返回登录页");
+    m_btnLogout->setFocusPolicy(Qt::NoFocus);
+    ui->verticalLayout->addWidget(m_btnLogout);
+    connect(m_btnLogout, &QPushButton::clicked, this, &MainWindow::onLogoutRequested);
+
     m_newFriendsBadge = new QLabel(ui->btnNewFriends);
     m_newFriendsBadge->setObjectName("newFriendsBadge");
     m_newFriendsBadge->setFixedSize(4, 4);
@@ -416,7 +444,7 @@ void MainWindow::initUI()
     m_friendRequestsEmptyLabel->setObjectName("emptyStateLabel");
     m_friendRequestsEmptyLabel->setAlignment(Qt::AlignCenter);
     m_friendRequestsEmptyLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
-    m_friendRequestsEmptyLabel->setText("暂无新的好友请求");
+    m_friendRequestsEmptyLabel->setText("暂时没有新的好友请求");
     m_friendRequestsEmptyLabel->hide();
 
     m_chatEmptyLabel = new QLabel(ui->chatArea);
@@ -448,383 +476,12 @@ void MainWindow::initUI()
     ui->horizontalLayout->setAlignment(ui->btnFile, Qt::AlignBottom);
     updateMessageInputHeight();
 
-    // UI 样式
-    QString style = R"(
-    /* 全局设置：字体与去边框 */
-    QWidget {
-        font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-        font-size: 14px;
-        border: none;
+    QFile styleFile(":/styles/dark.qss");
+    if (styleFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        this->setStyleSheet(QString::fromUtf8(styleFile.readAll()));
+    } else {
+        LOG_WARN("Failed to load stylesheet: :/styles/dark.qss");
     }
-
-    QWidget#MainWindow {
-        background-color: #1e2128;
-    }
-
-    QSplitter#contentSplitter::handle {
-        background-color: #1e2128;
-    }
-
-    QSplitter#contentSplitter::handle:hover {
-        background-color: #5865f2;
-    }
-
-    /* 左侧侧边栏：最深色 (#202225) */
-    QWidget#sideBar {
-        background-color: #202225;
-        border: none; /* 确保自身无边框 */
-    }
-
-    /* 侧边栏通用按钮 */
-    QWidget#sideBar QPushButton {
-        background-color: transparent;
-        color: #b9bbbe;       /* 浅灰色文字 */
-        border: none;         /* 去掉按钮边框 */
-        outline: none;
-        border-radius: 10px;
-        padding: 10px 5px;    /* 上下10px，左右缩减为5px，给文字留空 */
-        margin: 5px 8px;      /* 按钮左右留点空隙，不要贴边 */
-        font-weight: bold;
-        font-size: 10px;
-        text-align: left;     /* 文字靠左，这样图标和文字会排得整齐 */
-    }
-
-    QWidget#sideBar QPushButton:hover {
-        background-color: #4f545c; /* 悬停深灰 */
-        color: #ffffff;
-    }
-
-    QWidget#sideBar QPushButton:checked {
-        background-color: #5865F2; /* 选中时变成 Discord 蓝 */
-        color: #ffffff;
-    }
-
-    /* 头像按钮特殊处理：做大一点，居中 */
-    QWidget#sideBar QPushButton#btnAvatar {
-        background-color: #5865F2;
-        color: white;
-        border-radius: 18px;   /* 稍微方一点的圆角 */
-        font-size: 18px;       /* 头像的 emoji 可以大一点 */
-        margin: 15px 10px 20px 10px; /* 上 右 下 左 (下方拉开距离) */
-        min-height: 36px;
-        text-align: center;    /* 头像居中显示 */
-        padding: 0px;          /* 头像不需要内边距 */
-    }
-
-    QLabel#newFriendsBadge {
-        background-color: #ff4d4f;
-        border-radius: 2px;
-    }
-
-    QLabel#emptyStateLabel {
-        color: #72767d;
-        background-color: transparent;
-        font-size: 13px;
-        font-weight: normal;
-    }
-
-    QPushButton#btnWindowMinimize,
-    QPushButton#btnWindowMaximize,
-    QPushButton#btnWindowClose {
-        background-color: #2f3136;
-        color: #b9bbbe;
-        border: none;
-        border-radius: 4px;
-        font-size: 15px;
-        font-weight: bold;
-        padding: 0px;
-    }
-    QPushButton#btnWindowMinimize:hover,
-    QPushButton#btnWindowMaximize:hover {
-        background-color: #4f545c;
-        color: #ffffff;
-    }
-    QPushButton#btnWindowMinimize:pressed,
-    QPushButton#btnWindowMaximize:pressed,
-    QPushButton#btnWindowClose:pressed {
-        background-color: #5865f2;
-        color: #ffffff;
-    }
-    QPushButton#btnWindowClose:hover {
-        background-color: #ed4245;
-        color: #ffffff;
-    }
-
-    /* 中间列表区：中灰色 (#2f3136) */
-    QWidget#listArea{
-        background-color: #2f3136;
-    }
-
-    /* 新朋友列表专用样式 */
-    QListWidget#friendRequestsList {
-        background-color: #2f3136;
-        border: none;
-        outline: none;
-    }
-    QListWidget#friendRequestsList::item {
-        background-color: transparent;
-        border-bottom: 1px solid #3f4147; /* 给每一行加个底部分割线，更好看 */
-        padding: 0px; /* 因为我们在 Widget 里处理了 margin */
-    }
-    QListWidget#friendRequestsList::item:hover {
-        background-color: #35373c; /* 悬停时整个条目变亮一点 */
-    }
-    QListWidget#friendRequestsList::item:selected {
-        background-color: transparent; /* 禁止选中变蓝，因为只有按钮是交互点 */
-    }
-
-    QLabel#newFriendTitle {
-        background-color: #2f3136;
-        color: #72767d;
-        font-size: 14px;
-        font-weight: bold;
-    }
-
-    /* 搜索框：更黑一点，圆角 */
-    QLineEdit#searchEdit {
-        background-color: #202225;
-        color: #dcddde;
-        border: none;
-        border-radius: 4px;
-        padding: 8px;
-        margin: 10px 10px 0px 10px; /* 上右下左 */
-        font-size: 13px;
-    }
-    QLineEdit#searchEdit:focus {
-        background-color: #202225; /* 保持颜色 */
-        color: white;
-    }
-
-    /* 加号按钮样式 */
-    QPushButton#btnGroup {
-        background-color: #202225; /* 与搜索框同色或稍浅 */
-        color: #b9bbbe;
-        border-radius: 4px;
-        font-size: 20px;
-        font-weight: bold;
-        margin: 10px 10px 0px 5px; /* 上 右 下 左 */
-    }
-    QPushButton#btnGroup:hover {
-        background-color: #5865F2; /* 悬停变蓝 */
-        color: white;
-    }
-
-    /* 列表控件 */
-    QListWidget {
-        background-color: transparent;
-        outline: none; /* 去掉选中时的虚线框 */
-    }
-    QListWidget::item {
-        color: #8e9297; /* 默认未选中颜色 */
-        padding: 10px;
-        border-radius: 5px; /* 列表项也要圆角 */
-        margin: 1px 10px; /* 列表项左右留空，做成悬浮卡片感 */
-    }
-    QListWidget::item:hover {
-        background-color: #35373c;
-        color: #dcddde;
-    }
-    QListWidget::item:selected {
-        background-color: #393c43;
-        color: #ffffff;
-    }
-
-    /* 右侧聊天区：最亮色 (#36393f) */
-    QWidget#chatArea {
-        background-color: #36393f;
-    }
-
-    /* 顶部标题栏 */
-    QLabel#lblChatTitle {
-        color: #72767d;
-        font-size: 14px;
-        font-weight: bold;
-        border-bottom: 1px solid #26272d; /* 分割线 */
-        padding: 0px;
-    }
-
-    /* 聊天记录列表 */
-    QListView#chatList {
-        background-color: transparent;
-        border: none;
-        padding: 10px;
-    }
-
-    /* 好友列表滚动条 */
-    QListWidget#contactList QScrollBar:vertical {
-        background-color: transparent;
-        width: 8px;
-        margin: 4px 2px 4px 0px;
-        border: none;
-    }
-    QListWidget#contactList QScrollBar::handle:vertical {
-        background-color: transparent;
-        min-height: 12px;
-        border-radius: 4px;
-        margin: 0px 1px;
-    }
-    QListWidget#contactList QScrollBar[active="true"]::handle:vertical {
-        background-color: #5865f2;
-    }
-    QListWidget#contactList QScrollBar::handle:vertical:hover {
-        background-color: #4f545c;
-    }
-    QListWidget#contactList QScrollBar::handle:vertical:pressed {
-        background-color: #5865F2;
-    }
-    QListWidget#contactList QScrollBar::add-line:vertical,
-    QListWidget#contactList QScrollBar::sub-line:vertical {
-        height: 0px;
-        background: none;
-    }
-    QListWidget#contactList QScrollBar::add-page:vertical,
-    QListWidget#contactList QScrollBar::sub-page:vertical {
-        background-color: transparent;
-        border: none;
-    }
-
-    /* 聊天消息列表滚动条 */
-    QListView#chatList QScrollBar:vertical {
-        background-color: transparent;
-        width: 8px;
-        margin: 4px 2px 4px 0px;
-        border: none;
-    }
-    QListView#chatList QScrollBar::handle:vertical {
-        background-color: transparent;
-        min-height: 12px;
-        border-radius: 4px;
-        margin: 0px 1px;
-    }
-    QListView#chatList QScrollBar[active="true"]::handle:vertical {
-        background-color: #5865f2;
-    }
-    QListView#chatList QScrollBar::handle:vertical:hover {
-        background-color: #4f545c;
-    }
-    QListView#chatList QScrollBar::handle:vertical:pressed {
-        background-color: #5865F2;
-    }
-    QListView#chatList QScrollBar::add-line:vertical,
-    QListView#chatList QScrollBar::sub-line:vertical {
-        height: 0px;
-        background: none;
-    }
-    QListView#chatList QScrollBar::add-page:vertical,
-    QListView#chatList QScrollBar::sub-page:vertical {
-        background-color: transparent;
-        border: none;
-    }
-
-    /* 新朋友列表滚动条 */
-    QListWidget#friendRequestsList QScrollBar:vertical {
-        background-color: transparent;
-        width: 8px;
-        margin: 4px 2px 4px 0px;
-        border: none;
-    }
-    QListWidget#friendRequestsList QScrollBar::handle:vertical {
-        background-color: transparent;
-        min-height: 12px;
-        border-radius: 4px;
-        margin: 0px 1px;
-    }
-    QListWidget#friendRequestsList QScrollBar[active="true"]::handle:vertical {
-        background-color: #5865f2;
-    }
-    QListWidget#friendRequestsList QScrollBar::handle:vertical:hover {
-        background-color: #4f545c;
-    }
-    QListWidget#friendRequestsList QScrollBar::handle:vertical:pressed {
-        background-color: #5865F2;
-    }
-    QListWidget#friendRequestsList QScrollBar::add-line:vertical,
-    QListWidget#friendRequestsList QScrollBar::sub-line:vertical {
-        height: 0px;
-        background: none;
-    }
-    QListWidget#friendRequestsList QScrollBar::add-page:vertical,
-    QListWidget#friendRequestsList QScrollBar::sub-page:vertical {
-        background-color: transparent;
-        border: none;
-    }
-
-    /* 底部输入容器 */
-    QWidget#inputWidget {
-        background-color: #36393f; /* 与背景同色 */
-        padding: 10px;
-    }
-
-    /* 输入框 QTextEdit */
-    QTextEdit#msgEdit {
-        background-color: #40444b; /* 输入框背景深灰 */
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-size: 14px;
-    }
-    QTextEdit#msgEdit QScrollBar:vertical {
-        background-color: transparent;
-        width: 6px;
-        margin: 8px 2px 8px 0px;
-        border: none;
-    }
-    QTextEdit#msgEdit QScrollBar::handle:vertical {
-        background-color: #5865f2;
-        min-height: 16px;
-        border-radius: 3px;
-    }
-    QTextEdit#msgEdit QScrollBar::add-line:vertical,
-    QTextEdit#msgEdit QScrollBar::sub-line:vertical {
-        height: 0px;
-        background: none;
-    }
-    QTextEdit#msgEdit QScrollBar::add-page:vertical,
-    QTextEdit#msgEdit QScrollBar::sub-page:vertical {
-        background-color: transparent;
-        border: none;
-    }
-
-    /* 发送按钮 */
-    QPushButton#btnSend {
-        background-color: #5865F2; /* 品牌蓝 */
-        color: white;
-        border: none;
-        border-radius: 7px;
-        min-width: 64px;
-        max-width: 64px;
-        min-height: 36px;
-        max-height: 36px;
-        padding: 0px;
-        font-weight: bold;
-        font-size: 13px;
-        margin-left: 6px;
-    }
-    QPushButton#btnSend:hover {
-        background-color: #4752c4;
-        font-weight: bold;
-    }
-
-    QPushButton#btnImage {
-        color: #72767d;
-        border-radius: 20px;
-    }
-    QPushButton#btnImage:hover {
-        background-color: #40444b;
-        font-weight: bold;
-    }
-
-    QPushButton#btnFile {
-        color: #72767d;
-        border-radius: 20px;
-    }
-    QPushButton#btnFile:hover {
-        background-color: #40444b;
-        font-weight: bold;
-    }
-)";
-    this->setStyleSheet(style);
     updateWindowMaximizeButton();
     updateEmptyStates();
 }
@@ -849,6 +506,9 @@ void MainWindow::initModel()
     ui->chatList->verticalScrollBar()->setSingleStep(10);
     ui->chatList->viewport()->installEventFilter(this);
     ui->chatList->verticalScrollBar()->setProperty("active", false);
+    ui->chatList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->chatList, &QListView::customContextMenuRequested, this, &MainWindow::onChatListContextMenu);
+    connect(ui->chatList, &QListView::doubleClicked, this, &MainWindow::onChatListDoubleClicked);
 
     // 好友列表代理
     ui->contactList->setItemDelegate(m_contactDelegate);
@@ -1166,6 +826,30 @@ void MainWindow::updateContactLastMsgTime(int friendId, const QDateTime &time)
     }
 }
 
+void MainWindow::updateContactLastMessagePreview(int chatId, const QString &preview, const QDateTime &time)
+{
+    if (chatId == 0) {
+        return;
+    }
+
+    updateContactLastMsgTime(chatId, time);
+    if (chatId > 0) {
+        m_sessionVisibleFriendIds.insert(chatId);
+    }
+
+    for (int i = 0; i < ui->contactList->count(); ++i) {
+        QListWidgetItem *item = ui->contactList->item(i);
+        if (item->data(ContactDelegate::RoleStatus).toInt() != chatId) {
+            continue;
+        }
+
+        item->setData(ContactDelegate::RoleLastMessagePreview,
+                      item->data(ContactDelegate::RoleShowTime).toBool() ? preview : QString());
+        ui->contactList->viewport()->update();
+        break;
+    }
+}
+
 void MainWindow::updateContactListMode(bool isSessionMode)
 {
     // 切换模式时，重新请求好友列表和群聊列表
@@ -1278,6 +962,21 @@ void MainWindow::updateMessageInputHeight()
     ui->msgEdit->setVerticalScrollBarPolicy(docHeight > maxHeight ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
 }
 
+QString MainWindow::conversationPreviewForMessage(const ChatMessage &msg) const
+{
+    switch (msg.type) {
+    case TypeImage:
+        return "[图片]";
+    case TypeFile: {
+        const QString fileName = msg.fileName.isEmpty() ? msg.content.section('\n', 0, 0) : msg.fileName;
+        return QString("[文件] %1").arg(fileName.isEmpty() ? "未知文件" : fileName);
+    }
+    case TypeText:
+    default:
+        return msg.content.simplified();
+    }
+}
+
 ChatMessage MainWindow::makeFileMessage(const QString &fileId, const QString &fileName, const QString &detail, bool mine) const
 {
     const QString safeName = fileName.isEmpty() ? "未知文件" : fileName;
@@ -1288,26 +987,36 @@ ChatMessage MainWindow::makeFileMessage(const QString &fileId, const QString &fi
     ChatMessage msg(content, mine, mine ? ":/res/me.jpg" : ":/res/you.jpeg");
     msg.type = TypeFile;
     msg.fileId = fileId;
+    msg.fileName = safeName;
+    msg.fileDetail = detail;
+    msg.fileProgress = detail.contains('%') ? detail.section('%', 0, 0).section(' ', -1).toInt() : -1;
     return msg;
 }
 
 void MainWindow::appendChatMessage(int chatId, const ChatMessage &msg, bool showImmediately)
 {
+    ChatMessage message = msg;
+    if (message.timestamp == 0) {
+        message.timestamp = QDateTime::currentSecsSinceEpoch();
+    }
+
     bool replaced = false;
     if (chatId > 0) {
-        if (msg.type == TypeFile) {
-            replaced = replaceFileMessageInList(m_chatHistory[chatId], msg);
+        if (message.type == TypeFile) {
+            replaced = replaceFileMessageInList(m_chatHistory[chatId], message);
         }
         if (!replaced) {
-            m_chatHistory[chatId].append(msg);
+            m_chatHistory[chatId].append(message);
         }
+        normalizeMessageList(m_chatHistory[chatId]);
     } else if (chatId < 0) {
-        if (msg.type == TypeFile) {
-            replaced = replaceFileMessageInList(m_groupChatHistory[-chatId], msg);
+        if (message.type == TypeFile) {
+            replaced = replaceFileMessageInList(m_groupChatHistory[-chatId], message);
         }
         if (!replaced) {
-            m_groupChatHistory[-chatId].append(msg);
+            m_groupChatHistory[-chatId].append(message);
         }
+        normalizeMessageList(m_groupChatHistory[-chatId]);
     }
 
     const bool isCurrentPrivateChat = chatId > 0 && !m_isGroupChat && m_currentFriendId == chatId;
@@ -1315,18 +1024,30 @@ void MainWindow::appendChatMessage(int chatId, const ChatMessage &msg, bool show
 
     if (showImmediately && (isCurrentPrivateChat || isCurrentGroupChat)) {
         QList<ChatMessage> currentMessages = m_chatModel->getMessages();
-        if (msg.type == TypeFile && replaceFileMessageInList(currentMessages, msg)) {
+        if (message.type == TypeFile && replaceFileMessageInList(currentMessages, message)) {
+            normalizeMessageList(currentMessages);
             m_chatModel->setMessages(currentMessages);
         } else {
-            m_chatModel->addMessage(msg);
+            m_chatModel->addMessage(message);
         }
         ui->chatList->scrollToBottom();
         updateEmptyStates();
     }
 
-    if (msg.type == TypeFile) {
-        saveFileMessageHistory();
+    const QList<ChatMessage> *history = nullptr;
+    if (chatId > 0 && m_chatHistory.contains(chatId)) {
+        history = &m_chatHistory[chatId];
+    } else if (chatId < 0 && m_groupChatHistory.contains(-chatId)) {
+        history = &m_groupChatHistory[-chatId];
     }
+
+    if (history && !history->isEmpty()) {
+        const ChatMessage &lastMessage = history->last();
+        updateContactLastMessagePreview(chatId,
+                                        conversationPreviewForMessage(lastMessage),
+                                        QDateTime::fromSecsSinceEpoch(lastMessage.timestamp));
+    }
+    saveFileMessageHistory();
 }
 
 void MainWindow::syncCurrentChatModelToCache()
@@ -1342,6 +1063,115 @@ void MainWindow::syncCurrentChatModelToCache()
     }
 }
 
+void MainWindow::normalizeMessageList(QList<ChatMessage> &messages) const
+{
+    QMap<QString, int> lastFileIndex;
+    for (int i = 0; i < messages.size(); ++i) {
+        const ChatMessage &msg = messages[i];
+        if (msg.type == TypeFile && !msg.fileId.isEmpty()) {
+            if (lastFileIndex.contains(msg.fileId)) {
+                const int oldIndex = lastFileIndex.value(msg.fileId);
+                if (messages[oldIndex].timestamp <= msg.timestamp) {
+                    messages[oldIndex] = msg;
+                }
+                messages.removeAt(i);
+                --i;
+                continue;
+            }
+            lastFileIndex.insert(msg.fileId, i);
+        }
+    }
+
+    std::stable_sort(messages.begin(), messages.end(), [](const ChatMessage &left, const ChatMessage &right) {
+        return left.timestamp < right.timestamp;
+    });
+}
+
+ChatMessage *MainWindow::findFileMessage(const QString &fileId, int *chatId)
+{
+    if (fileId.isEmpty()) {
+        return nullptr;
+    }
+
+    for (auto it = m_chatHistory.begin(); it != m_chatHistory.end(); ++it) {
+        for (ChatMessage &msg : it.value()) {
+            if (msg.type == TypeFile && msg.fileId == fileId) {
+                if (chatId) {
+                    *chatId = it.key();
+                }
+                return &msg;
+            }
+        }
+    }
+
+    for (auto it = m_groupChatHistory.begin(); it != m_groupChatHistory.end(); ++it) {
+        for (ChatMessage &msg : it.value()) {
+            if (msg.type == TypeFile && msg.fileId == fileId) {
+                if (chatId) {
+                    *chatId = -it.key();
+                }
+                return &msg;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+ChatMessage MainWindow::currentFileMessageAt(const QModelIndex &index) const
+{
+    if (!index.isValid() || index.data(ChatModel::RoleType).toInt() != TypeFile) {
+        return ChatMessage();
+    }
+
+    ChatMessage msg;
+    msg.type = TypeFile;
+    msg.content = index.data(ChatModel::RoleContent).toString();
+    msg.isMine = index.data(ChatModel::RoleIsMine).toBool();
+    msg.avatarPath = index.data(ChatModel::RoleAvatar).toString();
+    msg.timestamp = index.data(ChatModel::RoleTimestamp).toULongLong();
+    msg.senderName = index.data(ChatModel::RoleSenderName).toString();
+    msg.isGroupChat = index.data(ChatModel::RoleIsGroupChat).toBool();
+    msg.encryptionStatus = static_cast<EncryptionStatus>(index.data(ChatModel::RoleEncryptionStatus).toInt());
+    msg.fileId = index.data(ChatModel::RoleFileId).toString();
+    msg.fileName = index.data(ChatModel::RoleFileName).toString();
+    msg.fileDetail = index.data(ChatModel::RoleFileDetail).toString();
+    msg.filePath = index.data(ChatModel::RoleFilePath).toString();
+    msg.fileSavePath = index.data(ChatModel::RoleFileSavePath).toString();
+    msg.filePeerId = index.data(ChatModel::RoleFilePeerId).toInt();
+    msg.fileProgress = index.data(ChatModel::RoleFileProgress).toInt();
+    msg.fileTransferredBytes = index.data(ChatModel::RoleFileTransferredBytes).toLongLong();
+    msg.fileTotalBytes = index.data(ChatModel::RoleFileTotalBytes).toLongLong();
+    return msg;
+}
+
+QString MainWindow::fileMessageOpenPath(const ChatMessage &msg) const
+{
+    if (!msg.fileSavePath.isEmpty()) {
+        return msg.fileSavePath;
+    }
+    if (!msg.filePath.isEmpty()) {
+        return msg.filePath;
+    }
+
+    const TransferState state = TransferStateManager::instance().loadTransferState(msg.fileId);
+    if (!state.filePath.isEmpty()) {
+        return state.filePath;
+    }
+    return state.tempFilePath;
+}
+
+QString MainWindow::formatTransferDetail(const QString &action, int percent, qint64 done, qint64 total) const
+{
+    QString detail = QString("%1 · %2%").arg(action).arg(qBound(0, percent, 100));
+    if (total > 0) {
+        detail += QString(" · %1/%2 KB")
+                      .arg(done / 1024)
+                      .arg(qMax<qint64>(1, total / 1024));
+    }
+    return detail;
+}
+
 bool MainWindow::replaceFileMessageInList(QList<ChatMessage> &messages, const ChatMessage &msg)
 {
     if (msg.type != TypeFile || msg.fileId.isEmpty()) {
@@ -1350,7 +1180,23 @@ bool MainWindow::replaceFileMessageInList(QList<ChatMessage> &messages, const Ch
 
     for (int i = messages.size() - 1; i >= 0; --i) {
         if (messages[i].type == TypeFile && messages[i].fileId == msg.fileId) {
-            messages[i] = msg;
+            ChatMessage merged = msg;
+            if (merged.timestamp == 0 || merged.timestamp < messages[i].timestamp) {
+                merged.timestamp = QDateTime::currentSecsSinceEpoch();
+            }
+            if (merged.filePath.isEmpty()) {
+                merged.filePath = messages[i].filePath;
+            }
+            if (merged.fileSavePath.isEmpty()) {
+                merged.fileSavePath = messages[i].fileSavePath;
+            }
+            if (merged.filePeerId <= 0) {
+                merged.filePeerId = messages[i].filePeerId;
+            }
+            if (merged.fileTotalBytes <= 0) {
+                merged.fileTotalBytes = messages[i].fileTotalBytes;
+            }
+            messages[i] = merged;
             return true;
         }
     }
@@ -1358,7 +1204,7 @@ bool MainWindow::replaceFileMessageInList(QList<ChatMessage> &messages, const Ch
     return false;
 }
 
-bool MainWindow::updateFileMessageStatusInList(QList<ChatMessage> &messages, const QString &fileId, const QString &detail)
+bool MainWindow::updateFileMessageStatusInList(QList<ChatMessage> &messages, const QString &fileId, const QString &detail, int progress, qint64 done, qint64 total, const QString &savePath)
 {
     if (fileId.isEmpty()) {
         return false;
@@ -1370,8 +1216,17 @@ bool MainWindow::updateFileMessageStatusInList(QList<ChatMessage> &messages, con
             continue;
         }
 
-        const QString fileName = msg.content.section('\n', 0, 0);
+        const QString fileName = msg.fileName.isEmpty() ? msg.content.section('\n', 0, 0) : msg.fileName;
         msg.content = detail.isEmpty() ? fileName : QString("%1\n%2").arg(fileName, detail);
+        msg.fileName = fileName;
+        msg.fileDetail = detail;
+        msg.fileProgress = progress;
+        msg.fileTransferredBytes = done > 0 ? done : msg.fileTransferredBytes;
+        msg.fileTotalBytes = total > 0 ? total : msg.fileTotalBytes;
+        if (!savePath.isEmpty()) {
+            msg.fileSavePath = savePath;
+        }
+        msg.timestamp = QDateTime::currentSecsSinceEpoch();
         return true;
     }
 
@@ -1380,18 +1235,23 @@ bool MainWindow::updateFileMessageStatusInList(QList<ChatMessage> &messages, con
 
 bool MainWindow::updateFileMessageStatus(const QString &fileId, const QString &detail)
 {
+    return updateFileMessageProgress(fileId, detail, -1);
+}
+
+bool MainWindow::updateFileMessageProgress(const QString &fileId, const QString &detail, int progress, qint64 done, qint64 total, const QString &savePath)
+{
     bool changed = false;
 
     for (auto it = m_chatHistory.begin(); it != m_chatHistory.end(); ++it) {
-        changed = updateFileMessageStatusInList(it.value(), fileId, detail) || changed;
+        changed = updateFileMessageStatusInList(it.value(), fileId, detail, progress, done, total, savePath) || changed;
     }
     for (auto it = m_groupChatHistory.begin(); it != m_groupChatHistory.end(); ++it) {
-        changed = updateFileMessageStatusInList(it.value(), fileId, detail) || changed;
+        changed = updateFileMessageStatusInList(it.value(), fileId, detail, progress, done, total, savePath) || changed;
     }
 
     if (m_chatModel) {
         QList<ChatMessage> currentMessages = m_chatModel->getMessages();
-        if (updateFileMessageStatusInList(currentMessages, fileId, detail)) {
+        if (updateFileMessageStatusInList(currentMessages, fileId, detail, progress, done, total, savePath)) {
             m_chatModel->setMessages(currentMessages);
             ui->chatList->scrollToBottom();
             updateEmptyStates();
@@ -1400,6 +1260,11 @@ bool MainWindow::updateFileMessageStatus(const QString &fileId, const QString &d
     }
 
     if (changed) {
+        int chatId = 0;
+        if (ChatMessage *msg = findFileMessage(fileId, &chatId)) {
+            const QString fileName = msg->fileName.isEmpty() ? msg->content.section('\n', 0, 0) : msg->fileName;
+            updateContactLastMessagePreview(chatId, QString("[文件] %1").arg(fileName), QDateTime::fromSecsSinceEpoch(msg->timestamp));
+        }
         saveFileMessageHistory();
     }
 
@@ -1412,7 +1277,7 @@ QString MainWindow::fileMessageHistoryPath() const
         return QString();
     }
 
-    const QString dirPath = QDir(QCoreApplication::applicationDirPath()).filePath("FileMessageHistory");
+    const QString dirPath = QDir(QCoreApplication::applicationDirPath()).filePath("MessageHistory");
     QDir().mkpath(dirPath);
     return QDir(dirPath).filePath(QString("user_%1.json").arg(m_currentUserId));
 }
@@ -1447,9 +1312,18 @@ void MainWindow::loadFileMessageHistory()
         }
 
         ChatMessage msg;
-        msg.type = TypeFile;
+        msg.type = static_cast<MsgType>(obj.value("type").toInt(TypeFile));
         msg.fileId = obj.value("fileId").toString();
         msg.content = obj.value("content").toString();
+        msg.image = QByteArray::fromBase64(obj.value("imageBase64").toString().toLatin1());
+        msg.fileName = obj.value("fileName").toString(msg.content.section('\n', 0, 0));
+        msg.fileDetail = obj.value("fileDetail").toString(msg.content.section('\n', 1));
+        msg.filePath = obj.value("filePath").toString();
+        msg.fileSavePath = obj.value("fileSavePath").toString();
+        msg.filePeerId = obj.value("filePeerId").toInt();
+        msg.fileProgress = obj.value("fileProgress").toInt(-1);
+        msg.fileTransferredBytes = static_cast<qint64>(obj.value("fileTransferredBytes").toDouble());
+        msg.fileTotalBytes = static_cast<qint64>(obj.value("fileTotalBytes").toDouble());
         msg.isMine = obj.value("isMine").toBool();
         msg.avatarPath = obj.value("avatar").toString(msg.isMine ? ":/res/me.jpg" : ":/res/you.jpeg");
         msg.timestamp = static_cast<quint64>(obj.value("timestamp").toDouble());
@@ -1457,7 +1331,9 @@ void MainWindow::loadFileMessageHistory()
         msg.isGroupChat = obj.value("isGroupChat").toBool(false);
         msg.encryptionStatus = EncryptionUnknown;
 
-        if (msg.content.isEmpty() || msg.fileId.isEmpty()) {
+        if ((msg.type == TypeText && msg.content.isEmpty())
+            || (msg.type == TypeImage && msg.image.isEmpty())
+            || (msg.type == TypeFile && (msg.content.isEmpty() || msg.fileId.isEmpty()))) {
             continue;
         }
 
@@ -1466,6 +1342,13 @@ void MainWindow::loadFileMessageHistory()
         } else {
             m_groupChatHistory[-chatId].append(msg);
         }
+    }
+
+    for (auto it = m_chatHistory.begin(); it != m_chatHistory.end(); ++it) {
+        normalizeMessageList(it.value());
+    }
+    for (auto it = m_groupChatHistory.begin(); it != m_groupChatHistory.end(); ++it) {
+        normalizeMessageList(it.value());
     }
 }
 
@@ -1479,14 +1362,32 @@ void MainWindow::saveFileMessageHistory() const
     QJsonArray items;
     auto appendMessages = [&items](int chatId, const QList<ChatMessage> &messages) {
         for (const ChatMessage &msg : messages) {
-            if (msg.type != TypeFile || msg.fileId.isEmpty()) {
+            if (msg.type == TypeText && msg.content.isEmpty()) {
+                continue;
+            }
+            if (msg.type == TypeImage && msg.image.isEmpty()) {
+                continue;
+            }
+            if (msg.type == TypeFile && msg.fileId.isEmpty()) {
                 continue;
             }
 
             QJsonObject obj;
             obj["chatId"] = chatId;
-            obj["fileId"] = msg.fileId;
+            obj["type"] = msg.type;
             obj["content"] = msg.content;
+            if (msg.type == TypeImage) {
+                obj["imageBase64"] = QString::fromLatin1(msg.image.toBase64());
+            }
+            obj["fileId"] = msg.fileId;
+            obj["fileName"] = msg.fileName;
+            obj["fileDetail"] = msg.fileDetail;
+            obj["filePath"] = msg.filePath;
+            obj["fileSavePath"] = msg.fileSavePath;
+            obj["filePeerId"] = msg.filePeerId;
+            obj["fileProgress"] = msg.fileProgress;
+            obj["fileTransferredBytes"] = static_cast<double>(msg.fileTransferredBytes);
+            obj["fileTotalBytes"] = static_cast<double>(msg.fileTotalBytes);
             obj["isMine"] = msg.isMine;
             obj["avatar"] = msg.avatarPath;
             obj["timestamp"] = static_cast<double>(msg.timestamp);
@@ -1548,7 +1449,7 @@ void MainWindow::updateEmptyStates()
         if (isSearching) {
             text = "没有找到相关用户";
         } else if (ui->btnChat->isChecked()) {
-            text = "暂无会话";
+            text = "暂无会话消息";
         } else {
             text = "暂无好友";
         }
@@ -1604,6 +1505,13 @@ void MainWindow::refreshContactList()
             item->setData(ContactDelegate::RoleLastMsgTime, lastTime);
             m_lastMsgTime[info.id] = lastTime;
         }
+        if (isSessionMode && m_chatHistory.contains(info.id) && !m_chatHistory.value(info.id).isEmpty()) {
+            const ChatMessage lastMsg = m_chatHistory.value(info.id).last();
+            item->setData(ContactDelegate::RoleLastMessagePreview, conversationPreviewForMessage(lastMsg));
+            item->setData(ContactDelegate::RoleLastMsgTime, QDateTime::fromSecsSinceEpoch(lastMsg.timestamp));
+        } else {
+            item->setData(ContactDelegate::RoleLastMessagePreview, QString());
+        }
 
         item->setText(QString::fromUtf8(info.userName));
 
@@ -1627,6 +1535,13 @@ void MainWindow::refreshContactList()
             QDateTime lastTime = QDateTime::fromSecsSinceEpoch(info.lastMsgTime);
             item->setData(ContactDelegate::RoleLastMsgTime, lastTime);
             m_groupLastMsgTime[info.groupId] = lastTime;
+        }
+        if (isSessionMode && m_groupChatHistory.contains(info.groupId) && !m_groupChatHistory.value(info.groupId).isEmpty()) {
+            const ChatMessage lastMsg = m_groupChatHistory.value(info.groupId).last();
+            item->setData(ContactDelegate::RoleLastMessagePreview, conversationPreviewForMessage(lastMsg));
+            item->setData(ContactDelegate::RoleLastMsgTime, QDateTime::fromSecsSinceEpoch(lastMsg.timestamp));
+        } else {
+            item->setData(ContactDelegate::RoleLastMessagePreview, QString());
         }
 
         QString displayText = QString("[群聊] %1 (%2人)").arg(QString::fromUtf8(info.groupName)).arg(info.memberCount);
@@ -1681,7 +1596,9 @@ void MainWindow::onContactListClicked(QListWidgetItem *item)
         ui->lblChatTitle->setText(name);
         m_chatModel->clearMessages();
         if (m_groupChatHistory.contains(groupId)) {
-            m_chatModel->setMessages(m_groupChatHistory.value(groupId));
+            QList<ChatMessage> messages = m_groupChatHistory.value(groupId);
+            normalizeMessageList(messages);
+            m_chatModel->setMessages(messages);
         }
 
         // 请求群聊历史消息
@@ -1726,7 +1643,9 @@ void MainWindow::onContactListClicked(QListWidgetItem *item)
         ui->lblChatTitle->setText(name);
         m_chatModel->clearMessages();
         if (m_chatHistory.contains(id)) {
-            m_chatModel->setMessages(m_chatHistory.value(id));
+            QList<ChatMessage> messages = m_chatHistory.value(id);
+            normalizeMessageList(messages);
+            m_chatModel->setMessages(messages);
         }
 
         QByteArray body;
@@ -1786,7 +1705,7 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
             if (m_currentFriendId == srcId) {
                 appendChatMessage(srcId, msg);
             } else {
-                m_chatHistory[srcId].append(msg);
+                appendChatMessage(srcId, msg, false);
                 // 增加未读计数
                 for (int i = 0; i < ui->contactList->count(); ++i) {
                     QListWidgetItem *item = ui->contactList->item(i);
@@ -1810,7 +1729,7 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
             appendChatMessage(srcId, msg);
         } else {
             // 否则应该显示红点提示
-            m_chatHistory[srcId].append(msg);
+            appendChatMessage(srcId, msg, false);
             // 找到好友列表里对应的 Item，增加未读计数
             for (int i = 0; i < ui->contactList->count(); ++i) {
                 QListWidgetItem *item = ui->contactList->item(i);
@@ -1840,7 +1759,7 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
             if (m_currentFriendId == srcId) {
                 appendChatMessage(srcId, msg);
             } else {
-                m_chatHistory[srcId].append(msg);
+                appendChatMessage(srcId, msg, false);
                 // 增加未读计数
                 for (int i = 0; i < ui->contactList->count(); ++i) {
                     QListWidgetItem *item = ui->contactList->item(i);
@@ -1862,7 +1781,7 @@ void MainWindow::onSigMsgReceived(uint32_t srcId, QByteArray body)
             appendChatMessage(srcId, msg);
         }else{
             // 红点显示
-            m_chatHistory[srcId].append(msg);
+            appendChatMessage(srcId, msg, false);
             for (int i = 0; i < ui->contactList->count(); ++i) {
                 QListWidgetItem *item = ui->contactList->item(i);
                 int uid = item->data(ContactDelegate::RoleStatus).toInt();
@@ -1887,12 +1806,10 @@ void MainWindow::onSigChatHistoryReceived(int friendId, const QList<std::tuple<i
 {
     if (m_isGroupChat || friendId != m_currentFriendId) return;
 
-    QList<ChatMessage> localFileMessages;
+    QList<ChatMessage> localMessages;
     const auto cachedMessages = m_chatHistory.value(friendId);
     for (const ChatMessage &cachedMsg : cachedMessages) {
-        if (cachedMsg.type == TypeFile) {
-            localFileMessages.append(cachedMsg);
-        }
+        localMessages.append(cachedMsg);
     }
 
     QList<ChatMessage> mergedMessages;
@@ -1926,12 +1843,37 @@ void MainWindow::onSigChatHistoryReceived(int friendId, const QList<std::tuple<i
         }
     }
 
-    for (const ChatMessage &fileMsg : localFileMessages) {
-        mergedMessages.append(fileMsg);
+    for (const ChatMessage &localMsg : localMessages) {
+        if (localMsg.type == TypeFile) {
+            mergedMessages.append(localMsg);
+            continue;
+        }
+
+        bool exists = false;
+        for (const ChatMessage &serverMsg : mergedMessages) {
+            if (serverMsg.type == localMsg.type
+                && serverMsg.timestamp == localMsg.timestamp
+                && serverMsg.isMine == localMsg.isMine
+                && serverMsg.content == localMsg.content
+                && serverMsg.image == localMsg.image) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            mergedMessages.append(localMsg);
+        }
     }
 
+    normalizeMessageList(mergedMessages);
     m_chatHistory[friendId] = mergedMessages;
     m_chatModel->setMessages(mergedMessages);
+    if (!mergedMessages.isEmpty()) {
+        const ChatMessage &lastMessage = mergedMessages.last();
+        updateContactLastMessagePreview(friendId,
+                                        conversationPreviewForMessage(lastMessage),
+                                        QDateTime::fromSecsSinceEpoch(lastMessage.timestamp));
+    }
     ui->chatList->scrollToBottom();
     updateEmptyStates();
 }
@@ -1961,9 +1903,14 @@ void MainWindow::onSearchTimerTimeout()
     QString keyword = ui->searchEdit->text().trimmed();
 
     if(keyword.isEmpty()){
+        m_lastSearchKeyword.clear();
         // 搜索框清空后再次显示回好友列表
         NetworkManager::instance().sendMsg(MSG_FRIEND_LIST_REQ,QByteArray());
+    }else if(keyword == m_lastSearchKeyword){
+        return;
     }else{
+        m_lastSearchKeyword = keyword;
+        m_activeSearchRequestId = qHash(keyword) ^ static_cast<quint32>(m_currentUserId);
         // 发送搜索请求
         SearchReq req;
         memset(&req,0,sizeof(SearchReq));
@@ -1973,9 +1920,15 @@ void MainWindow::onSearchTimerTimeout()
     }
 }
 
-void MainWindow::onSigSearchUserResult(QList<FriendInfo> list)
+void MainWindow::onSigSearchUserResult(QList<FriendInfo> list, quint32 requestId, bool reset, bool hasMore)
 {
-    ui->contactList->clear();
+    if (requestId != 0 && requestId != m_activeSearchRequestId) {
+        return;
+    }
+
+    if (reset) {
+        ui->contactList->clear();
+    }
 
     for(const auto &info : list){
         QListWidgetItem *item = new QListWidgetItem(ui->contactList);
@@ -2068,6 +2021,7 @@ void MainWindow::onSigSearchUserResult(QList<FriendInfo> list)
         }
     }
 
+    Q_UNUSED(hasMore)
     updateEmptyStates();
 }
 
@@ -2227,8 +2181,12 @@ void MainWindow::onSigFileTransferRequest(const QString &fileId, const QString &
         // 记录活动传输
         ReconnectTransferManager::instance().saveActiveTransfer(fileId, fileName, senderId,false);
 
-        const QString detail = isResume ? QString("继续接收 · %1").arg(sizeStr) : QString("接收中 · %1").arg(sizeStr);
-        appendChatMessage(senderId, makeFileMessage(fileId, fileName, detail, false));
+        const QString detail = isResume ? QString("继续接收 · %1").arg(sizeStr) : QString("接收中 · 0% · %1").arg(sizeStr);
+        ChatMessage fileMsg = makeFileMessage(fileId, fileName, detail, false);
+        fileMsg.filePeerId = senderId;
+        fileMsg.fileProgress = isResume && state.totalChunks > 0 ? (state.completedChunks.size() * 100) / state.totalChunks : 0;
+        fileMsg.fileTotalBytes = fileSize;
+        appendChatMessage(senderId, fileMsg);
     }
 
     QByteArray packet = makePacket(MSG_FILE_TRANSFER_RESP,QByteArray((char*)&resp,sizeof(FileTransferResp)),0,senderId);
@@ -2272,7 +2230,15 @@ void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
             const QString detail = isResume
                 ? QString("继续发送 · %1 · 已完成 %2/%3 分片").arg(sizeStr).arg(state.completedChunks.size()).arg(state.totalChunks)
                 : QString("发送中 · %1").arg(sizeStr);
-            appendChatMessage(targetFriendId, makeFileMessage(fileId, fileName, detail, true));
+            ChatMessage fileMsg = makeFileMessage(fileId, fileName, detail, true);
+            fileMsg.filePath = filePath;
+            fileMsg.filePeerId = targetFriendId;
+            fileMsg.fileProgress = isResume && state.totalChunks > 0 ? (state.completedChunks.size() * 100) / state.totalChunks : 0;
+            fileMsg.fileTransferredBytes = isResume && state.totalChunks > 0
+                ? qMin<qint64>(declaredFileSize, (qint64)state.completedChunks.size() * 64 * 1024)
+                : 0;
+            fileMsg.fileTotalBytes = declaredFileSize;
+            appendChatMessage(targetFriendId, fileMsg);
 
             const bool notInTargetChat = (m_currentFriendId != targetFriendId) || m_isGroupChat;
             if (notInTargetChat) {
@@ -2302,15 +2268,12 @@ void MainWindow::onFileTransferStarted(const QString &fileId, const QString &fil
 
 void MainWindow::onFileTransferProgress(const QString &fileId, int percent, qint64 sent, qint64 total)
 {
-    Q_UNUSED(fileId)
-    Q_UNUSED(percent)
-    Q_UNUSED(sent)
-    Q_UNUSED(total)
+    updateFileMessageProgress(fileId, formatTransferDetail("发送中", percent, sent, total), percent, sent, total);
 }
 
 void MainWindow::onFileTransferCompleted(const QString &fileId)
 {
-    updateFileMessageStatus(fileId, "已发送");
+    updateFileMessageProgress(fileId, "已发送 · 100%", 100);
 
     QMessageBox::information(this, "文件传输", "文件传输完成！");
     LOG_INFO_FMT("File transfer completed:%1",fileId);
@@ -2318,7 +2281,7 @@ void MainWindow::onFileTransferCompleted(const QString &fileId)
 
 void MainWindow::onFileTransferFailed(const QString &fileId, const QString &error)
 {
-    updateFileMessageStatus(fileId, "发送失败");
+    updateFileMessageProgress(fileId, "发送失败", -1);
 
     QMessageBox::warning(this, "传输失败", "文件传输失败: " + error);
     LOG_ERROR_FMT("File %1 transfer failed,%2",fileId,error);
@@ -2374,16 +2337,13 @@ void MainWindow::onFileTransferAck(const QString &fileId, int chunkIndex, int re
 
 void MainWindow::onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total)
 {
-    Q_UNUSED(fileId)
-    Q_UNUSED(percent)
-    Q_UNUSED(received)
-    Q_UNUSED(total)
+    updateFileMessageProgress(fileId, formatTransferDetail("接收中", percent, received, total), percent, received, total);
 }
 
 void MainWindow::onFileReceiveCompleted(const QString &fileId, const QString &savePath)
 {
     LOG_INFO_FMT("File receive completed:%1",savePath);
-    updateFileMessageStatus(fileId, "已接收");
+    updateFileMessageProgress(fileId, "已接收 · 100%", 100, 0, 0, savePath);
     
     // 使用QTimer::singleShot延迟显示对话框，避免在信号处理过程中阻塞
     // 这对于防止程序崩溃非常重要，特别是当信号从非主线程发射时
@@ -2402,7 +2362,7 @@ void MainWindow::onFileReceiveCompleted(const QString &fileId, const QString &sa
 void MainWindow::onFileReceiveFailed(const QString &fileId, const QString &error)
 {
     LOG_ERROR_FMT("File %1 received failed,%2",fileId,error);
-    updateFileMessageStatus(fileId, "接收失败");
+    updateFileMessageProgress(fileId, "接收失败", -1);
     
     // 使用QTimer::singleShot延迟显示对话框，避免在信号处理过程中阻塞
     QTimer::singleShot(100, this, [this, fileId, error]() {
@@ -2425,16 +2385,20 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
 
     bool isMe = (senderId == m_currentUserId);
     QString avatar = isMe ? ":/res/me.jpg" : ":/res/you.jpeg";
+    const QString displaySenderName = senderName.trimmed().isEmpty()
+        ? (isMe ? QString::fromUtf8("\xE6\x88\x91")
+                : QString::fromUtf8("\xE6\x9C\xAA\xE7\x9F\xA5\xE7\x94\xA8\xE6\x88\xB7"))
+        : senderName;
 
     if (subType == SUB_TEXT) {
         // 检查解密是否失败（内容为空）
         if (realData.isEmpty()) {
             LOG_WARN_FMT("[MainWindow] Received group message with empty content from group %1 - decryption may have failed", groupId);
             QString errorText = "[群消息解密失败]";
-            ChatMessage msg(errorText, isMe, avatar, senderName);
+            ChatMessage msg(errorText, isMe, avatar, displaySenderName);
             
             if (m_isGroupChat && m_currentGroupId == groupId) {
-                m_chatModel->addMessage(msg);
+                appendChatMessage(-groupId, msg);
                 ui->chatList->scrollToBottom();
                 if (messageId > 0) {
                     GroupMsgCursorAck ack;
@@ -2443,7 +2407,7 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                     NetworkManager::instance().sendMsg(MSG_GROUP_MSG_READ_ACK, QByteArray((char*)&ack, sizeof(ack)));
                 }
             } else {
-                m_groupChatHistory[groupId].append(msg);
+                appendChatMessage(-groupId, msg, false);
                 // 显示未读红点
                 for (int i = 0; i < ui->contactList->count(); ++i) {
                     QListWidgetItem *item = ui->contactList->item(i);
@@ -2461,11 +2425,11 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
         }
         
         QString text = QString::fromUtf8(realData);
-        ChatMessage msg(text, isMe, avatar, senderName);
+        ChatMessage msg(text, isMe, avatar, displaySenderName);
 
         // 如果当前正在这个群聊
         if (m_isGroupChat && m_currentGroupId == groupId) {
-            m_chatModel->addMessage(msg);
+            appendChatMessage(-groupId, msg);
             ui->chatList->scrollToBottom();
             if (messageId > 0) {
                 GroupMsgCursorAck ack;
@@ -2475,7 +2439,7 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
             }
         } else {
             // 存入历史记录
-            m_groupChatHistory[groupId].append(msg);
+            appendChatMessage(-groupId, msg, false);
 
             // 显示未读红点：找到群聊列表项并增加未读计数
             for (int i = 0; i < ui->contactList->count(); ++i) {
@@ -2500,10 +2464,10 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
         if (realData.isEmpty()) {
             LOG_WARN_FMT("[MainWindow] Received group image with empty content from group %1 - decryption may have failed", groupId);
             QString errorText = "[群图片解密失败]";
-            ChatMessage msg(errorText, isMe, avatar, senderName);
+            ChatMessage msg(errorText, isMe, avatar, displaySenderName);
             
             if (m_isGroupChat && m_currentGroupId == groupId) {
-                m_chatModel->addMessage(msg);
+                appendChatMessage(-groupId, msg);
                 ui->chatList->scrollToBottom();
                 if (messageId > 0) {
                     GroupMsgCursorAck ack;
@@ -2512,7 +2476,7 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                     NetworkManager::instance().sendMsg(MSG_GROUP_MSG_READ_ACK, QByteArray((char*)&ack, sizeof(ack)));
                 }
             } else {
-                m_groupChatHistory[groupId].append(msg);
+                appendChatMessage(-groupId, msg, false);
                 // 显示未读红点
                 for (int i = 0; i < ui->contactList->count(); ++i) {
                     QListWidgetItem *item = ui->contactList->item(i);
@@ -2529,10 +2493,10 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
             return;
         }
         
-        ChatMessage msg(realData, isMe, avatar, senderName);
+        ChatMessage msg(realData, isMe, avatar, displaySenderName);
 
         if (m_isGroupChat && m_currentGroupId == groupId) {
-            m_chatModel->addMessage(msg);
+            appendChatMessage(-groupId, msg);
             ui->chatList->scrollToBottom();
             if (messageId > 0) {
                 GroupMsgCursorAck ack;
@@ -2541,7 +2505,7 @@ void MainWindow::onGroupMsgReceived(int groupId, int senderId, const QString &se
                 NetworkManager::instance().sendMsg(MSG_GROUP_MSG_READ_ACK, QByteArray((char*)&ack, sizeof(ack)));
             }
         } else {
-            m_groupChatHistory[groupId].append(msg);
+            appendChatMessage(-groupId, msg, false);
 
             // 显示未读红点
             for (int i = 0; i < ui->contactList->count(); ++i) {
@@ -2567,6 +2531,8 @@ void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<
 {
     if (!m_isGroupChat || groupId != m_currentGroupId) return;
 
+    QList<ChatMessage> mergedMessages = m_groupChatHistory.value(groupId);
+
     for (const auto &item : history) {
         int senderId = std::get<0>(item);
         QString senderName = std::get<1>(item);
@@ -2577,6 +2543,10 @@ void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<
 
         bool isMe = (senderId == m_currentUserId);
         QString avatar = isMe ? ":/res/me.jpg" : ":/res/you.jpeg";
+        const QString displaySenderName = senderName.trimmed().isEmpty()
+            ? (isMe ? QString::fromUtf8("\xE6\x88\x91")
+                    : QString::fromUtf8("\xE6\x9C\xAA\xE7\x9F\xA5\xE7\x94\xA8\xE6\x88\xB7"))
+            : senderName;
 
         char msgType = rawBody[0];
         QByteArray realContent = rawBody.mid(1);
@@ -2585,25 +2555,35 @@ void MainWindow::onGroupChatHistoryReceived(int groupId, const QList<std::tuple<
         if (realContent.isEmpty()) {
             LOG_WARN_FMT("[MainWindow] Received group history with empty content from group %1 - decryption may have failed", groupId);
             if (msgType == SUB_IMAGE) {
-                ChatMessage msg(QString("[历史群图片解密失败]"), isMe, avatar, senderName, timestamp);
-                m_chatModel->addMessage(msg);
+                ChatMessage msg(QString("[历史群图片解密失败]"), isMe, avatar, displaySenderName, timestamp);
+                mergedMessages.append(msg);
             } else {
-                ChatMessage msg(QString("[历史群消息解密失败]"), isMe, avatar, senderName, timestamp);
-                m_chatModel->addMessage(msg);
+                ChatMessage msg(QString("[历史群消息解密失败]"), isMe, avatar, displaySenderName, timestamp);
+                mergedMessages.append(msg);
             }
             continue;
         }
 
         if (msgType == SUB_IMAGE) {
-            ChatMessage msg(realContent, isMe, avatar, senderName, timestamp);
-            m_chatModel->addMessage(msg);
+            ChatMessage msg(realContent, isMe, avatar, displaySenderName, timestamp);
+            mergedMessages.append(msg);
         } else {
             QString text = QString::fromUtf8(realContent);
-            ChatMessage msg(text, isMe, avatar, senderName, timestamp);
-            m_chatModel->addMessage(msg);
+            ChatMessage msg(text, isMe, avatar, displaySenderName, timestamp);
+            mergedMessages.append(msg);
         }
     }
+    normalizeMessageList(mergedMessages);
+    m_groupChatHistory[groupId] = mergedMessages;
+    m_chatModel->setMessages(mergedMessages);
+    if (!mergedMessages.isEmpty()) {
+        const ChatMessage &lastMessage = mergedMessages.last();
+        updateContactLastMessagePreview(-groupId,
+                                        conversationPreviewForMessage(lastMessage),
+                                        QDateTime::fromSecsSinceEpoch(lastMessage.timestamp));
+    }
     ui->chatList->scrollToBottom();
+    saveFileMessageHistory();
 }
 
 void MainWindow::onCreateGroupResult(bool success, int groupId)
@@ -2870,7 +2850,10 @@ void MainWindow::on_btnSend_clicked()
         GroupChatMessage header;
         header.groupId = m_currentGroupId;
         header.senderId = m_currentUserId;
-        strncpy(header.senderName, m_currentUserName.toUtf8().constData(), 31);
+        const QString currentSenderName = m_currentUserName.trimmed().isEmpty()
+            ? QString::fromUtf8("\xE6\x88\x91")
+            : m_currentUserName;
+        strncpy(header.senderName, currentSenderName.toUtf8().constData(), 31);
         header.senderName[31] = '\0';
 
         // 获取或生成群聊密钥
@@ -2907,7 +2890,7 @@ void MainWindow::on_btnSend_clicked()
         NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_TEXT, body);
 
         // 本地显示（群聊消息也显示自己的用户名）
-        ChatMessage msg(text, true, ":/res/me.jpg", m_currentUserName);
+        ChatMessage msg(text, true, ":/res/me.jpg", currentSenderName);
         appendChatMessage(-m_currentGroupId, msg);
         
         // 更新最后消息时间（群聊ID为负数）
@@ -3070,7 +3053,10 @@ void MainWindow::on_btnImage_clicked()
         GroupChatMessage header;
         header.groupId = m_currentGroupId;
         header.senderId = m_currentUserId;
-        strncpy(header.senderName, m_currentUserName.toUtf8().constData(), 31);
+        const QString currentSenderName = m_currentUserName.trimmed().isEmpty()
+            ? QString::fromUtf8("\xE6\x88\x91")
+            : m_currentUserName;
+        strncpy(header.senderName, currentSenderName.toUtf8().constData(), 31);
         header.senderName[31] = '\0';
 
         // 获取或生成群聊密钥
@@ -3106,7 +3092,7 @@ void MainWindow::on_btnImage_clicked()
         NetworkManager::instance().sendMsg(MSG_GROUP_CHAT_TEXT, body);
 
         // 本地显示（群聊消息也显示自己的用户名）
-        ChatMessage msg(imageData, true, ":/res/me.jpg", m_currentUserName);
+        ChatMessage msg(imageData, true, ":/res/me.jpg", currentSenderName);
         appendChatMessage(-m_currentGroupId, msg);
     } else if (m_currentFriendId > 0) {
         // 私聊发送图片 - 需要加密
@@ -3198,6 +3184,13 @@ void MainWindow::on_btnFile_clicked()
     // 发送请求
     QByteArray packet = makePacket(MSG_FILE_TRANSFER_REQ,QByteArray((char*)&req,sizeof(FileTransferReq)),0,m_currentFriendId);
     NetworkManager::instance().sendRow(packet);
+
+    ChatMessage pendingMsg = makeFileMessage(fileId, fileInfo.fileName(), "等待对方接收 · 0%", true);
+    pendingMsg.filePath = filePath;
+    pendingMsg.filePeerId = m_currentFriendId;
+    pendingMsg.fileProgress = 0;
+    pendingMsg.fileTotalBytes = fileInfo.size();
+    appendChatMessage(m_currentFriendId, pendingMsg);
 }
 
 
@@ -3313,6 +3306,134 @@ void MainWindow::onContactListContextMenu(const QPoint &pos)
     // 如果是会话模式（btnChat->isChecked()），则不显示任何右键菜单
 }
 
+void MainWindow::onChatListContextMenu(const QPoint &pos)
+{
+    const QModelIndex index = ui->chatList->indexAt(pos);
+    ChatMessage msg = currentFileMessageAt(index);
+    if (msg.type != TypeFile || msg.fileId.isEmpty()) {
+        return;
+    }
+
+    QMenu menu(this);
+    QAction *openFileAction = menu.addAction("打开文件");
+    QAction *openFolderAction = menu.addAction("打开所在文件夹");
+    menu.addSeparator();
+    QAction *retrySendAction = menu.addAction("重新发送");
+    QAction *retryReceiveAction = menu.addAction("重新接收");
+    QAction *cancelAction = menu.addAction("取消传输");
+
+    const QString openPath = fileMessageOpenPath(msg);
+    openFileAction->setEnabled(!openPath.isEmpty() && QFileInfo::exists(openPath));
+    openFolderAction->setEnabled(!openPath.isEmpty() && QFileInfo(openPath).absoluteDir().exists());
+    retrySendAction->setEnabled(msg.isMine);
+    retryReceiveAction->setEnabled(!msg.isMine);
+
+    QAction *selected = menu.exec(ui->chatList->viewport()->mapToGlobal(pos));
+    if (!selected) {
+        return;
+    }
+
+    int chatId = 0;
+    if (ChatMessage *stored = findFileMessage(msg.fileId, &chatId)) {
+        msg = *stored;
+    }
+
+    if (selected == openFileAction) {
+        const QString path = fileMessageOpenPath(msg);
+        if (path.isEmpty() || !QFileInfo::exists(path)) {
+            QMessageBox::information(this, "打开文件", "本地文件不存在或尚未接收完成");
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        return;
+    }
+
+    if (selected == openFolderAction) {
+        const QString path = fileMessageOpenPath(msg);
+        QFileInfo info(path);
+        if (path.isEmpty() || !info.absoluteDir().exists()) {
+            QMessageBox::information(this, "打开文件夹", "本地文件夹不存在");
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+        return;
+    }
+
+    if (selected == retrySendAction) {
+        const QString path = msg.filePath.isEmpty() ? fileMessageOpenPath(msg) : msg.filePath;
+        QFileInfo info(path);
+        const int peerId = msg.filePeerId > 0 ? msg.filePeerId : (chatId > 0 ? chatId : m_currentFriendId);
+        if (!info.exists() || !info.isFile() || peerId <= 0) {
+            QMessageBox::warning(this, "重新发送", "找不到原文件或接收方信息，无法重新发送");
+            return;
+        }
+
+        const QString newFileId = FileTransferManager::instance().generateFileId(path);
+        m_pendingFileTransfers[newFileId] = path;
+        m_pendingFileTransferTargets[newFileId] = peerId;
+        m_pendingFileTransferSizes[newFileId] = info.size();
+
+        FileTransferReq req;
+        memset(&req, 0, sizeof(FileTransferReq));
+        strncpy(req.fileName, info.fileName().toUtf8().constData(), sizeof(req.fileName) - 1);
+        req.fileSize = info.size();
+        req.totalChunks = (info.size() + 64 * 1024 - 1) / (64 * 1024);
+        strncpy(req.fileId, newFileId.toUtf8().constData(), sizeof(req.fileId) - 1);
+        QByteArray packet = makePacket(MSG_FILE_TRANSFER_REQ, QByteArray((char*)&req, sizeof(FileTransferReq)), 0, peerId);
+        NetworkManager::instance().sendRow(packet);
+
+        ChatMessage resendMsg = makeFileMessage(newFileId, info.fileName(), "等待对方接收 · 0%", true);
+        resendMsg.filePath = path;
+        resendMsg.filePeerId = peerId;
+        resendMsg.fileProgress = 0;
+        resendMsg.fileTotalBytes = info.size();
+        appendChatMessage(peerId, resendMsg);
+        return;
+    }
+
+    if (selected == retryReceiveAction) {
+        const int peerId = msg.filePeerId > 0 ? msg.filePeerId : (chatId > 0 ? chatId : m_currentFriendId);
+        if (peerId <= 0) {
+            QMessageBox::warning(this, "重新接收", "找不到发送方信息，无法重新接收");
+            return;
+        }
+        NetworkManager::instance().requestResumeTransfer(msg.fileId, peerId);
+        updateFileMessageProgress(msg.fileId, "请求重新接收 · 0%", 0);
+        return;
+    }
+
+    if (selected == cancelAction) {
+        const int peerId = msg.filePeerId > 0 ? msg.filePeerId : (chatId > 0 ? chatId : m_currentFriendId);
+        FileTransferManager::instance().cancelTransfer(msg.fileId);
+        FileReceiver::instance().cancelReceiving(msg.fileId);
+        ReconnectTransferManager::instance().removeCompletedTransfer(msg.fileId);
+        TransferStateManager::instance().removeTransferState(msg.fileId);
+        if (peerId > 0) {
+            NetworkManager::instance().requestCancelTransfer(msg.fileId, peerId);
+        }
+        updateFileMessageProgress(msg.fileId, "已取消", -1);
+    }
+}
+
+void MainWindow::onChatListDoubleClicked(const QModelIndex &index)
+{
+    ChatMessage msg = currentFileMessageAt(index);
+    if (msg.type != TypeFile || msg.fileId.isEmpty()) {
+        return;
+    }
+
+    int chatId = 0;
+    if (ChatMessage *stored = findFileMessage(msg.fileId, &chatId)) {
+        Q_UNUSED(chatId)
+        msg = *stored;
+    }
+
+    const QString path = fileMessageOpenPath(msg);
+    if (!path.isEmpty() && QFileInfo::exists(path)) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    }
+}
+
 void MainWindow::onSigDeleteFriendResponse(int result, int targetId)
 {
     if (result == 1) {
@@ -3356,3 +3477,4 @@ void MainWindow::onSigLeaveGroupResponse(int result, int groupId)
         QMessageBox::warning(this, "退出群聊", "退出群聊失败，请稍后重试。");
     }
 }
+
