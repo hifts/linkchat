@@ -1,4 +1,5 @@
 ﻿#include "filetransferthread.h"
+#include "filetransferconstants.h"
 #include "logger.h"
 #include "transferstatemanager.h"
 #include "encryptionmanager.h"
@@ -19,7 +20,7 @@ FileTransferThread::FileTransferThread(const QString &filePath,
     , m_friendId(friendId)
     , m_currentUserId(currentUserId)
     , m_transferSize(transferSize)
-    , m_chunkSize(64 * 1024)  // 默认64KB每片
+    , m_chunkSize(FILE_TRANSFER_CHUNK_SIZE)
     , m_stopped(false)
     , m_paused(false)
 {}
@@ -304,7 +305,6 @@ void FileTransferThread::run()
 
     emit transferCompleted();
 }
-
 
 
 

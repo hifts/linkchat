@@ -18,6 +18,7 @@ add_library(LinkChatCommon STATIC
     packet.cpp
     packetcodec.h
     packetcodec.cpp
+    filetransferconstants.h
     logger.h
     encryptionmanager.h
     encryptionmanager.cpp

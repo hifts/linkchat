@@ -1,4 +1,5 @@
 ﻿#include "filereceiver.h"
+#include "filetransferconstants.h"
 #include "transferstatemanager.h"
 #include "logger.h"
 #include "encryptionmanager.h"
@@ -12,8 +13,6 @@
 #include <qdebug.h>
 
 namespace {
-constexpr qint64 kFileChunkSize = 64 * 1024;
-
 void destroyReceivingInfo(ReceivingFileInfo *info)
 {
     if (!info) {
@@ -175,7 +174,7 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
             info->receivedChunks = saveState.completedChunks.size();
             info->receivedSize = qMin<qint64>(
                 fileSize,
-                static_cast<qint64>(saveState.completedChunks.size()) * kFileChunkSize);
+                static_cast<qint64>(saveState.completedChunks.size()) * FILE_TRANSFER_CHUNK_SIZE);
 
             LOG_INFO(QString("Resuming file receiving:%1,completed chunks:%2/%3")
                          .arg(fileName).arg(info->receivedChunks).arg(saveState.totalChunks));
@@ -259,7 +258,7 @@ bool FileReceiver::startReceivingInternal(const QString &fileId, const QString &
     info->savePath = savePath;
     info->tempPath = tempPath;
     info->totalSize = fileSize;
-    info->totalChunks = (fileSize + 64 * 1024 -1) / (64 * 1024);
+    info->totalChunks = (fileSize + FILE_TRANSFER_CHUNK_SIZE - 1) / FILE_TRANSFER_CHUNK_SIZE;
     info->senderId = senderId;          // 存储发送者ID用于解密
     info->expectedMD5 = expectedMD5;    // 存储期望的MD5值
 
@@ -454,7 +453,7 @@ QString FileReceiver::validateChunk(const QString &fileId, const ReceivingFileIn
     if (info->receivedChunkMap.contains(chunkIndex)) {
         return "分片已接收";
     }
-    if (data.isEmpty() || data.size() > 1024 * 1024) {
+    if (data.isEmpty() || data.size() > FILE_TRANSFER_MAX_CHUNK_SIZE) {
         return "分片数据无效";
     }
 
@@ -478,9 +477,9 @@ QByteArray FileReceiver::decryptChunk(const ReceivingFileInfo *info, const QByte
 
 bool FileReceiver::writeChunkToFile(ReceivingFileInfo *info, int chunkIndex, const QByteArray &data, QString *errorMessage)
 {
-    const qint64 offset = static_cast<qint64>(chunkIndex) * kFileChunkSize;
+    const qint64 offset = static_cast<qint64>(chunkIndex) * FILE_TRANSFER_CHUNK_SIZE;
     const qint64 remaining = info->totalSize - offset;
-    const qint64 expectedChunkSize = qMin<qint64>(kFileChunkSize, remaining);
+    const qint64 expectedChunkSize = qMin<qint64>(FILE_TRANSFER_CHUNK_SIZE, remaining);
 
     if (remaining <= 0 || expectedChunkSize <= 0) {
         if (errorMessage) *errorMessage = "文件偏移量超出范围";
@@ -614,7 +613,7 @@ bool FileReceiver::copyFileSafely(const QString &sourcePath, const QString &dest
         const qint64 totalBytes = sourceFile.size();
         qint64 bytesCopied = 0;
         while (bytesCopied < totalBytes) {
-            const QByteArray buffer = sourceFile.read(kFileChunkSize);
+            const QByteArray buffer = sourceFile.read(FILE_TRANSFER_CHUNK_SIZE);
             if (buffer.isEmpty() && !sourceFile.atEnd()) {
                 if (errorMessage) *errorMessage = "复制时读取源文件失败";
                 break;

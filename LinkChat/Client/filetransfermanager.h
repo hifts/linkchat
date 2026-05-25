@@ -47,6 +47,7 @@ public:
     QString generateFileId(const QString &filePath);
 
     void onChunkAcked(const QString &fileId, int chunkIndex);
+    void onChunksAcked(const QString &fileId, const QList<int> &chunkIndexes);
 signals:
     void transferStarted(const QString &fileId, const QString &fileName);
     void transferProgress(const QString &fileId, int percent, qint64 sent, qint64 total);

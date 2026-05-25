@@ -1,9 +1,11 @@
 ﻿#include "networkmanager.h"
 #include "clientmessagerouter.h"
+#include "filetransferconstants.h"
 #include "logger.h"
 #include "packetcodec.h"
 
 #include <cstring>
+#include <QTimer>
 
 NetworkManager &NetworkManager::instance()
 {
@@ -91,6 +93,46 @@ void NetworkManager::sendRow(const QByteArray &packet)
     }else{
         LOG_WARN("Socket is not connected, cannot send packet");
     }
+}
+
+void NetworkManager::sendFilePacket(const QByteArray &packet)
+{
+    if(packet.isEmpty()){
+        return;
+    }
+
+    if(m_socket->state() != QAbstractSocket::ConnectedState){
+        LOG_WARN("Socket is not connected, cannot send file packet");
+        return;
+    }
+
+    if(m_fileWriteBuffer.isEmpty()){
+        m_fileWriteBuffer.reserve(FILE_TRANSFER_WRITE_BATCH_BYTES + packet.size());
+    }
+    m_fileWriteBuffer.append(packet);
+
+    if(m_fileWriteBuffer.size() >= FILE_TRANSFER_WRITE_BATCH_BYTES){
+        flushFilePackets();
+        return;
+    }
+
+    if(!m_fileFlushQueued){
+        m_fileFlushQueued = true;
+        QTimer::singleShot(2, this, &NetworkManager::flushFilePackets);
+    }
+}
+
+void NetworkManager::flushFilePackets()
+{
+    m_fileFlushQueued = false;
+    if(m_fileWriteBuffer.isEmpty()){
+        return;
+    }
+
+    if(m_socket->state() == QAbstractSocket::ConnectedState){
+        m_socket->write(m_fileWriteBuffer);
+    }
+    m_fileWriteBuffer.clear();
 }
 
 void NetworkManager::requestResumeTransfer(const QString &fileId, int friendId)

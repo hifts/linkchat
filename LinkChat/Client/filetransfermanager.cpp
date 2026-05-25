@@ -1,4 +1,6 @@
 ﻿#include "filetransfermanager.h"
+#include "filetransferconstants.h"
+#include "networkmanager.h"
 #include "transferstatemanager.h"
 #include "logger.h"
 
@@ -77,7 +79,7 @@ QString FileTransferManager::startSendFile(const QString &fileId,const QString &
     info->friendId = friendId;
     info->isReceiving = false;
     info->progress = 0;
-    info->totalChunks = (info->fileSize + 64 * 1024 - 1) / (64 * 1024);
+    info->totalChunks = (info->fileSize + FILE_TRANSFER_CHUNK_SIZE - 1) / FILE_TRANSFER_CHUNK_SIZE;
     info->allChunksSent = false;
     info->thread = new FileTransferThread(filePath,fileId,friendId,m_currentUserId,transferSize,this);
 
@@ -195,14 +197,13 @@ QList<TransferState> FileTransferManager::getIncompleteTransfers()
 
 void FileTransferManager::onChunkAcked(const QString &fileId, int chunkIndex)
 {
+    onChunksAcked(fileId, QList<int>{chunkIndex});
+}
+
+void FileTransferManager::onChunksAcked(const QString &fileId, const QList<int> &chunkIndexes)
+{
     FileTransferInfo *info = m_transfers.value(fileId, nullptr);
     if (!info) {
-        return;
-    }
-
-    if (chunkIndex >= info->totalChunks) {
-        LOG_WARN(QString("Ignore invalid ACK: fileId=%1 chunk=%2 total=%3")
-                 .arg(fileId).arg(chunkIndex).arg(info->totalChunks));
         return;
     }
 
@@ -212,11 +213,21 @@ void FileTransferManager::onChunkAcked(const QString &fileId, int chunkIndex)
         return;
     }
 
-    if (chunkIndex >= 0) {
-        if (!info->session.markAcked(chunkIndex)) {
-            return;
+    bool hasNewAck = false;
+    for (int chunkIndex : chunkIndexes) {
+        if (chunkIndex >= info->totalChunks) {
+            LOG_WARN(QString("Ignore invalid ACK: fileId=%1 chunk=%2 total=%3")
+                     .arg(fileId).arg(chunkIndex).arg(info->totalChunks));
+            continue;
         }
-        TransferStateManager::instance().markChunkCompleted(fileId, chunkIndex);
+
+        if (chunkIndex >= 0 && info->session.markAcked(chunkIndex)) {
+            TransferStateManager::instance().markChunkCompleted(fileId, chunkIndex);
+            hasNewAck = true;
+        }
+    }
+
+    if (hasNewAck) {
         state = TransferStateManager::instance().loadTransferState(fileId);
     }
 
@@ -224,7 +235,7 @@ void FileTransferManager::onChunkAcked(const QString &fileId, int chunkIndex)
     const int ackedChunks = info->session.ackedCount();
 
     info->progress = totalChunks > 0 ? (ackedChunks * 100) / totalChunks : 0;
-    emit transferProgress(fileId, info->progress, qMin<qint64>(info->fileSize, (qint64)ackedChunks * 64 * 1024), info->fileSize);
+    emit transferProgress(fileId, info->progress, qMin<qint64>(info->fileSize, (qint64)ackedChunks * FILE_TRANSFER_CHUNK_SIZE), info->fileSize);
 
     if (info->session.isComplete() || (info->allChunksSent && totalChunks > 0 && ackedChunks >= totalChunks)) {
         TransferStateManager::instance().removeTransferState(fileId);
@@ -272,7 +283,6 @@ void FileTransferManager::dispatchTransfer(FileTransferInfo *info)
         return;
     }
 
-    constexpr int kMaxInFlightChunks = 8;
     constexpr int kAckTimeoutMs = 3000;
     constexpr int kMaxRetryAttempts = 5;
 
@@ -281,7 +291,7 @@ void FileTransferManager::dispatchTransfer(FileTransferInfo *info)
         sendChunk(info, chunkIndex, true);
     }
 
-    for(int chunkIndex : info->session.takeSendWindow(kMaxInFlightChunks)){
+    for(int chunkIndex : info->session.takeSendWindow(FILE_TRANSFER_MAX_IN_FLIGHT_CHUNKS)){
         sendChunk(info, chunkIndex, false);
     }
 

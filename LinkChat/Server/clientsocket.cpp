@@ -17,7 +17,7 @@ Q_DECLARE_METATYPE(QSharedPointer<QList<int>>)
 
 namespace {
 constexpr int MAX_SOCKET_BUFFER_LEN = 2 * 1024 * 1024;
-constexpr qint64 MAX_PENDING_WRITE_BYTES = 4 * 1024 * 1024;
+constexpr qint64 MAX_PENDING_WRITE_BYTES = 16 * 1024 * 1024;
 }
 
 ClientSocket::ClientSocket(QObject *parent)

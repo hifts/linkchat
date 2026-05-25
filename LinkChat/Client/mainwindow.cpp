@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 #include "networkmanager.h"
 #include "filetransfermanager.h"
+#include "filetransferconstants.h"
 #include "filereceiver.h"
 #include "groupdialog.h"
 #include "logger.h"
@@ -603,6 +604,7 @@ void MainWindow::connectSignalsAndSlots()
     // 关联文件接收信号
     connect(&NetworkManager::instance(),&NetworkManager::receiveChunk,this,&MainWindow::onFileReceiveChunk);
     connect(&NetworkManager::instance(),&NetworkManager::sigFileTransferAck,this,&MainWindow::onFileTransferAck);
+    connect(&NetworkManager::instance(),&NetworkManager::sigFileTransferAckBatch,this,&MainWindow::onFileTransferAckBatch);
     connect(&FileReceiver::instance(),&FileReceiver::receiveProgress,this,&MainWindow::onFileReceiveProgress);
 
     connect(&FileReceiver::instance(),&FileReceiver::receiveCompleted,
@@ -699,7 +701,7 @@ void MainWindow::sendFileTransferRequestForResume(const QString &fileId, const T
     req.fileName[255] = '\0';
     req.fileSize = state.fileSize;
 
-    quint64 chunkSize = 64 * 1024;
+    quint64 chunkSize = FILE_TRANSFER_CHUNK_SIZE;
     req.totalChunks = (state.fileSize + chunkSize - 1) / chunkSize;
 
     strncpy(req.fileId, fileId.toUtf8().constData(), sizeof(req.fileId) - 1);
@@ -2235,7 +2237,7 @@ void MainWindow::onsigFileTransferResponse(const QString &fileId, bool accepted)
             fileMsg.filePeerId = targetFriendId;
             fileMsg.fileProgress = isResume && state.totalChunks > 0 ? (state.completedChunks.size() * 100) / state.totalChunks : 0;
             fileMsg.fileTransferredBytes = isResume && state.totalChunks > 0
-                ? qMin<qint64>(declaredFileSize, (qint64)state.completedChunks.size() * 64 * 1024)
+                ? qMin<qint64>(declaredFileSize, (qint64)state.completedChunks.size() * FILE_TRANSFER_CHUNK_SIZE)
                 : 0;
             fileMsg.fileTotalBytes = declaredFileSize;
             appendChatMessage(targetFriendId, fileMsg);
@@ -2303,13 +2305,13 @@ void MainWindow::onSendFileChunk(const QString &fileId, const QByteArray &chunk,
     chunkHeader.chunkIndex = chunkIndex;
     chunkHeader.chunkSize = chunk.size();
 
-    // 组装包体：头部 + 实际数据（已加密）
-    QByteArray body;
-    body.append((char*)&chunkHeader,sizeof(FileChunk));
-    body.append(chunk);
-
-    QByteArray packet = makePacket(MSG_FILE_CHUNK,body,0,friendId);
-    NetworkManager::instance().sendRow(packet);
+    QByteArray packet = makePacketFromParts(MSG_FILE_CHUNK,
+                                            reinterpret_cast<const char*>(&chunkHeader),
+                                            sizeof(FileChunk),
+                                            chunk,
+                                            0,
+                                            friendId);
+    NetworkManager::instance().sendFilePacket(packet);
 
     Q_UNUSED(totalChunks)
 }
@@ -2320,19 +2322,77 @@ void MainWindow::onFileReceiveChunk(const QString &fileId, int chunkIndex, const
         return;
     }
 
-    FileTransferAck ack;
-    memset(&ack, 0, sizeof(FileTransferAck));
-    strncpy(ack.fileId, fileId.toUtf8().constData(), sizeof(ack.fileId) - 1);
-    ack.chunkIndex = chunkIndex;
-
-    QByteArray packet = makePacket(MSG_FILE_TRANSFER_ACK, QByteArray((char*)&ack, sizeof(FileTransferAck)), 0, senderId);
-    NetworkManager::instance().sendRow(packet);
+    queueFileTransferAck(fileId, chunkIndex, senderId);
 }
 
 void MainWindow::onFileTransferAck(const QString &fileId, int chunkIndex, int receiverId)
 {
     Q_UNUSED(receiverId)
     FileTransferManager::instance().onChunkAcked(fileId, chunkIndex);
+}
+
+void MainWindow::onFileTransferAckBatch(const QString &fileId, const QList<int> &chunkIndexes, int receiverId)
+{
+    Q_UNUSED(receiverId)
+    FileTransferManager::instance().onChunksAcked(fileId, chunkIndexes);
+}
+
+void MainWindow::queueFileTransferAck(const QString &fileId, int chunkIndex, int senderId)
+{
+    QList<int> &batch = m_pendingFileAckBatches[fileId];
+    batch.append(chunkIndex);
+    m_pendingFileAckSenders[fileId] = senderId;
+
+    if (batch.size() >= FILE_TRANSFER_ACK_BATCH_SIZE) {
+        sendFileTransferAckBatch(fileId, batch, senderId);
+        m_pendingFileAckBatches.remove(fileId);
+        m_pendingFileAckSenders.remove(fileId);
+        return;
+    }
+
+    if (!m_fileAckFlushTimer) {
+        m_fileAckFlushTimer = new QTimer(this);
+        m_fileAckFlushTimer->setSingleShot(true);
+        m_fileAckFlushTimer->setInterval(20);
+        connect(m_fileAckFlushTimer, &QTimer::timeout, this, &MainWindow::flushFileTransferAcks);
+    }
+
+    if (!m_fileAckFlushTimer->isActive()) {
+        m_fileAckFlushTimer->start();
+    }
+}
+
+void MainWindow::flushFileTransferAcks()
+{
+    const QStringList fileIds = m_pendingFileAckBatches.keys();
+    for (const QString &fileId : fileIds) {
+        const QList<int> chunkIndexes = m_pendingFileAckBatches.take(fileId);
+        const int senderId = m_pendingFileAckSenders.take(fileId);
+        if (!chunkIndexes.isEmpty()) {
+            sendFileTransferAckBatch(fileId, chunkIndexes, senderId);
+        }
+    }
+}
+
+void MainWindow::sendFileTransferAckBatch(const QString &fileId, const QList<int> &chunkIndexes, int senderId)
+{
+    if (chunkIndexes.isEmpty()) {
+        return;
+    }
+
+    FileTransferAckBatchHeader header;
+    memset(&header, 0, sizeof(header));
+    strncpy(header.latestAck.fileId, fileId.toUtf8().constData(), sizeof(header.latestAck.fileId) - 1);
+    header.latestAck.chunkIndex = static_cast<quint32>(chunkIndexes.last());
+    header.ackCount = static_cast<quint32>(chunkIndexes.size());
+
+    QByteArray body(reinterpret_cast<const char*>(&header), sizeof(header));
+    for (int chunkIndex : chunkIndexes) {
+        const quint32 ackedChunk = static_cast<quint32>(chunkIndex);
+        body.append(reinterpret_cast<const char*>(&ackedChunk), sizeof(ackedChunk));
+    }
+
+    NetworkManager::instance().sendRow(makePacket(MSG_FILE_TRANSFER_ACK, body, 0, senderId));
 }
 
 void MainWindow::onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total)
@@ -3174,8 +3234,8 @@ void MainWindow::on_btnFile_clicked()
     req.fileName[255] = '\0';
     req.fileSize = fileInfo.size();
 
-    // 分片总数（每片64KB）
-    quint64 chunkSize = 64 * 1024;
+    // 分片总数
+    quint64 chunkSize = FILE_TRANSFER_CHUNK_SIZE;
     req.totalChunks = (fileInfo.size() + chunkSize - 1) / chunkSize;
 
     strncpy(req.fileId,fileId.toUtf8().constData(),63);
@@ -3377,7 +3437,7 @@ void MainWindow::onChatListContextMenu(const QPoint &pos)
         memset(&req, 0, sizeof(FileTransferReq));
         strncpy(req.fileName, info.fileName().toUtf8().constData(), sizeof(req.fileName) - 1);
         req.fileSize = info.size();
-        req.totalChunks = (info.size() + 64 * 1024 - 1) / (64 * 1024);
+        req.totalChunks = (info.size() + FILE_TRANSFER_CHUNK_SIZE - 1) / FILE_TRANSFER_CHUNK_SIZE;
         strncpy(req.fileId, newFileId.toUtf8().constData(), sizeof(req.fileId) - 1);
         QByteArray packet = makePacket(MSG_FILE_TRANSFER_REQ, QByteArray((char*)&req, sizeof(FileTransferReq)), 0, peerId);
         NetworkManager::instance().sendRow(packet);

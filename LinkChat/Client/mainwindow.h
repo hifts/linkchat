@@ -17,6 +17,7 @@
 #include <QPointer>
 #include <QTimer>
 #include <QSplitter>
+#include <QHash>
 #include <tuple>
 
 namespace Ui {
@@ -110,6 +111,9 @@ private:
     QString fileMessageHistoryPath() const;
     void loadFileMessageHistory();
     void saveFileMessageHistory() const;
+    void queueFileTransferAck(const QString &fileId, int chunkIndex, int senderId);
+    void flushFileTransferAcks();
+    void sendFileTransferAckBatch(const QString &fileId, const QList<int> &chunkIndexes, int senderId);
 
 private slots:
     void onFriendListReceived(QList<FriendInfo> list);
@@ -162,6 +166,7 @@ private slots:
 
     void onFileReceiveChunk(const QString &fileId, int chunkIndex, const QByteArray &chunk, int senderId);
     void onFileTransferAck(const QString &fileId, int chunkIndex, int receiverId);
+    void onFileTransferAckBatch(const QString &fileId, const QList<int> &chunkIndexes, int receiverId);
     void onFileReceiveProgress(const QString &fileId, int percent, qint64 received, qint64 total);
     void onFileReceiveCompleted(const QString &fileId,const QString &savePath);
     void onFileReceiveFailed(const QString &fileId, const QString &error);
@@ -229,6 +234,9 @@ private:
     QMap<QString, QString> m_pendingFileTransfers;
     QMap<QString, int> m_pendingFileTransferTargets;
     QMap<QString, qint64> m_pendingFileTransferSizes;
+    QHash<QString, QList<int>> m_pendingFileAckBatches;
+    QHash<QString, int> m_pendingFileAckSenders;
+    QTimer *m_fileAckFlushTimer = nullptr;
     QString m_lastSearchKeyword;
     quint32 m_activeSearchRequestId = 0;
 

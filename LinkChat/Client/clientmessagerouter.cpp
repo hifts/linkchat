@@ -1,5 +1,6 @@
 #include "clientmessagerouter.h"
 
+#include "filetransferconstants.h"
 #include "networkmanager.h"
 #include "logger.h"
 
@@ -325,7 +326,7 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
                 break;
             }
 
-            if (declaredChunkSize < 0 || declaredChunkSize > 1024 * 1024) {
+            if (declaredChunkSize < 0 || declaredChunkSize > FILE_TRANSFER_MAX_CHUNK_SIZE) {
                 LOG_ERROR(QString("Invalid declared chunk size: %1").arg(declaredChunkSize));
                 break;
             }
@@ -381,7 +382,28 @@ void ClientMessageRouter::dispatch(uint32_t msgType, uint32_t srcId, const QByte
             memcpy(&ack, body.data(), sizeof(FileTransferAck));
 
             QString fileId = QString::fromLatin1(ack.fileId, safe_strnlen(ack.fileId, sizeof(ack.fileId)));
-            emit m_manager->sigFileTransferAck(fileId, static_cast<int>(ack.chunkIndex), srcId);
+            QList<int> ackedChunks;
+            if (body.size() >= (int)sizeof(FileTransferAckBatchHeader)) {
+                FileTransferAckBatchHeader batchHeader;
+                memset(&batchHeader, 0, sizeof(batchHeader));
+                memcpy(&batchHeader, body.constData(), sizeof(batchHeader));
+                const int maxAckCount = (body.size() - (int)sizeof(FileTransferAckBatchHeader)) / (int)sizeof(quint32);
+                const int ackCount = qMin<int>(batchHeader.ackCount, maxAckCount);
+                const char *ptr = body.constData() + sizeof(FileTransferAckBatchHeader);
+                for (int i = 0; i < ackCount; ++i) {
+                    quint32 chunkIndex = 0;
+                    memcpy(&chunkIndex, ptr, sizeof(chunkIndex));
+                    ackedChunks.append(static_cast<int>(chunkIndex));
+                    ptr += sizeof(chunkIndex);
+                }
+            }
+
+            if (ackedChunks.isEmpty()) {
+                ackedChunks.append(static_cast<int>(ack.chunkIndex));
+                emit m_manager->sigFileTransferAck(fileId, static_cast<int>(ack.chunkIndex), srcId);
+            } else {
+                emit m_manager->sigFileTransferAckBatch(fileId, ackedChunks, srcId);
+            }
             break;
         }
         case MSG_CREATE_GROUP_RESP: {

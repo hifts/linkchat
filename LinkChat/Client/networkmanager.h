@@ -34,6 +34,8 @@ public:
     void sendMsg(uint32_t type,const QByteArray &body);
 
     void sendRow(const QByteArray& packet);
+    void sendFilePacket(const QByteArray& packet);
+    void flushFilePackets();
 
     HeartbeatManager* getHeartbeatManager() { return m_heartbeatManager; }
     ReconnectManager* getReconnectManager() { return m_reconnectManager; }
@@ -85,6 +87,7 @@ signals:
 
     void receiveChunk(const QString &fileId, int chunkIndex, const QByteArray &data, int senderId);
     void sigFileTransferAck(const QString &fileId, int chunkIndex, int receiverId);
+    void sigFileTransferAckBatch(const QString &fileId, const QList<int> &chunkIndexes, int receiverId);
 
     void sigCreateGroupResult(bool success, int groupId);
 
@@ -117,11 +120,13 @@ public:
 private:
     QTcpSocket *m_socket;
     QByteArray m_buffer;
+    bool m_fileFlushQueued = false;
 
     HeartbeatManager *m_heartbeatManager;
     ReconnectManager *m_reconnectManager;
     
     int m_currentUserId = 0;
+    QByteArray m_fileWriteBuffer;
 };
 
 #endif // NETWORKMANAGER_H

@@ -19,6 +19,10 @@ add_executable(FileTransferRecoveryTest
     ../Client/filetransfersession.cpp
 )
 
+add_executable(FileTransferE2ETest
+    filetransfer_e2e_test.cpp
+)
+
 target_link_libraries(LoadTester PRIVATE
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Network
@@ -27,5 +31,11 @@ target_link_libraries(LoadTester PRIVATE
 
 target_link_libraries(FileTransferRecoveryTest PRIVATE
     Qt${QT_VERSION_MAJOR}::Core
+    LinkChatCommon
+)
+
+target_link_libraries(FileTransferE2ETest PRIVATE
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Network
     LinkChatCommon
 )

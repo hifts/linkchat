@@ -236,6 +236,11 @@ struct FileTransferAck {
 };
 
 // 中断/取消文件传输通知：通信双方任一方取消传输将发送此指令及原因
+struct FileTransferAckBatchHeader {
+    FileTransferAck latestAck;
+    quint32 ackCount;
+};
+
 struct FileTransferCancel {
     char fileId[64];
     quint8 reason;
@@ -346,6 +351,12 @@ struct GroupChatHistoryItem {
 #pragma pack(pop)
 
 QByteArray makePacket(uint32_t type, const QByteArray& body, uint32_t src = 0, uint32_t dest = 0);
+QByteArray makePacketFromParts(uint32_t type,
+                               const char *bodyHead,
+                               qsizetype bodyHeadSize,
+                               const QByteArray &bodyTail,
+                               uint32_t src = 0,
+                               uint32_t dest = 0);
 
 #endif // PACKET_H
 
